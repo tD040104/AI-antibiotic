@@ -1,0 +1,27 @@
+2025-11-11T09:30:17.491408Z -- RAW_STDIN_REPR: '{ age\\/gender : 23\\/F , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:30:17.493675Z -- JSON_DECODE_ERROR: Expecting property name enclosed in double quotes: line 1 column 3 (char 2) -- DATA_REPR: '{ age\\/gender : 23\\/F , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:30:17.494703Z -- BASE64_OF_DECODED: eyBhZ2VcL2dlbmRlciA6IDIzXC9GICwgU291Y2hlcyA6IEVzY2hlcmljaGlhIGNvbGkgLCBEaWFiZXRlcyA6IE5vICwgSHlwZXJ0ZW5zaW9uIDogTm8gLCBIb3NwaXRhbF9iZWZvcmUgOiBObyAsIEluZmVjdGlvbl9GcmVxIDowLCBDb2xsZWN0aW9uX0RhdGUgOiAyMDI1LTExLTA0ICwgTm90ZXMgOiAgfQ==
+2025-11-11T09:32:03.700780Z -- RAW_STDIN_REPR: '{ age\\/gender : 23\\/M , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:32:03.701783Z -- JSON_DECODE_ERROR: Expecting property name enclosed in double quotes: line 1 column 3 (char 2) -- DATA_REPR: '{ age\\/gender : 23\\/M , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:32:03.702786Z -- BASE64_OF_DECODED: eyBhZ2VcL2dlbmRlciA6IDIzXC9NICwgU291Y2hlcyA6IEVzY2hlcmljaGlhIGNvbGkgLCBEaWFiZXRlcyA6IE5vICwgSHlwZXJ0ZW5zaW9uIDogTm8gLCBIb3NwaXRhbF9iZWZvcmUgOiBObyAsIEluZmVjdGlvbl9GcmVxIDowLCBDb2xsZWN0aW9uX0RhdGUgOiAyMDI1LTExLTA0ICwgTm90ZXMgOiAgfQ==
+2025-11-11T09:34:51.900234Z -- RAW_STDIN_REPR: '{ age\\/gender : 23\\/F , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:34:51.900234Z -- JSON_DECODE_ERROR: Expecting property name enclosed in double quotes: line 1 column 3 (char 2) -- DATA_REPR: '{ age\\/gender : 23\\/F , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:34:51.901236Z -- BASE64_OF_DECODED: eyBhZ2VcL2dlbmRlciA6IDIzXC9GICwgU291Y2hlcyA6IEVzY2hlcmljaGlhIGNvbGkgLCBEaWFiZXRlcyA6IE5vICwgSHlwZXJ0ZW5zaW9uIDogTm8gLCBIb3NwaXRhbF9iZWZvcmUgOiBObyAsIEluZmVjdGlvbl9GcmVxIDowLCBDb2xsZWN0aW9uX0RhdGUgOiAyMDI1LTExLTA0ICwgTm90ZXMgOiAgfQ==
+2025-11-11T09:37:20.359714Z -- RAW_STDIN_REPR: 'eyJhZ2UiOiIyMyJ9'
+2025-11-11T09:37:20.360720Z -- DECODED_INPUT_REPR: '{"age":"23"}'
+2025-11-11T09:37:20.448201Z -- RAW_STDIN_REPR: ''
+2025-11-11T09:37:20.448201Z -- EMPTY_INPUT_AFTER_DECODING
+2025-11-11T09:37:30.992252Z -- RAW_STDIN_REPR: 'eyJhZ2UiOiIyMyJ9'
+2025-11-11T09:37:30.993759Z -- DECODED_INPUT_REPR: '{"age":"23"}'
+2025-11-11T09:37:31.089274Z -- RAW_STDIN_REPR: ''
+2025-11-11T09:37:31.090275Z -- EMPTY_INPUT_AFTER_DECODING
+2025-11-11T09:39:45.306824Z -- RAW_STDIN_REPR: '{ age\\/gender : 23\\/F , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:39:45.306824Z -- JSON_DECODE_ERROR: Expecting property name enclosed in double quotes: line 1 column 3 (char 2) -- DATA_REPR: '{ age\\/gender : 23\\/F , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:39:45.307827Z -- BASE64_OF_DECODED: eyBhZ2VcL2dlbmRlciA6IDIzXC9GICwgU291Y2hlcyA6IEVzY2hlcmljaGlhIGNvbGkgLCBEaWFiZXRlcyA6IE5vICwgSHlwZXJ0ZW5zaW9uIDogTm8gLCBIb3NwaXRhbF9iZWZvcmUgOiBObyAsIEluZmVjdGlvbl9GcmVxIDowLCBDb2xsZWN0aW9uX0RhdGUgOiAyMDI1LTExLTA0ICwgTm90ZXMgOiAgfQ==
+2025-11-11T09:45:04.974579Z -- RAW_STDIN_REPR: '{ age\\/gender : 23\\/M , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:45:04.975591Z -- JSON_DECODE_ERROR: Expecting property name enclosed in double quotes: line 1 column 3 (char 2) -- DATA_REPR: '{ age\\/gender : 23\\/M , Souches : Escherichia coli , Diabetes : No , Hypertension : No , Hospital_before : No , Infection_Freq :0, Collection_Date : 2025-11-04 , Notes :  }'
+2025-11-11T09:45:04.976664Z -- BASE64_OF_DECODED: eyBhZ2VcL2dlbmRlciA6IDIzXC9NICwgU291Y2hlcyA6IEVzY2hlcmljaGlhIGNvbGkgLCBEaWFiZXRlcyA6IE5vICwgSHlwZXJ0ZW5zaW9uIDogTm8gLCBIb3NwaXRhbF9iZWZvcmUgOiBObyAsIEluZmVjdGlvbl9GcmVxIDowLCBDb2xsZWN0aW9uX0RhdGUgOiAyMDI1LTExLTA0ICwgTm90ZXMgOiAgfQ==
+2025-11-11T09:48:09.255388Z -- RAW_STDIN_REPR: 'eyJhZ2UiOiIyMyJ9'
+2025-11-11T09:48:09.255388Z -- DECODED_INPUT_REPR: '{"age":"23"}'
+2025-11-11T09:48:12.781167Z -- RAW_STDIN_REPR: ''
+2025-11-11T09:48:12.781167Z -- EMPTY_INPUT_AFTER_DECODING

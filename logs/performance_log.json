@@ -1,0 +1,114 @@
+[
+  {
+    "timestamp": "2025-11-01T21:56:31.532266",
+    "test_name": "initial_training",
+    "accuracy": 1.0,
+    "avg_auc": 1.0,
+    "num_samples": 1992,
+    "num_features": 98
+  },
+  {
+    "timestamp": "2025-11-01T21:58:52.823764",
+    "test_name": "initial_training",
+    "accuracy": 1.0,
+    "avg_auc": 1.0,
+    "num_samples": 1992,
+    "num_features": 98
+  },
+  {
+    "timestamp": "2025-11-01T22:02:34.594266",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-01T22:03:15.173151",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-01T22:05:22.845589",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-01T22:08:43.019408",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-01T22:09:40.120270",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-01T22:10:38.251959",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-03T17:21:44.100355",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-04T12:38:02.625258",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-04T12:39:16.881842",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-04T12:40:33.062729",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-11T14:49:13.355634",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-11T14:49:42.131567",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  }
+]
