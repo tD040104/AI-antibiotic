@@ -110,5 +110,45 @@
     "avg_auc": 0.6207949597052195,
     "num_samples": 1992,
     "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-13T00:13:51.571226",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-13T00:14:14.803075",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-13T17:44:09.295424",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-13T18:00:03.273955",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
+  },
+  {
+    "timestamp": "2025-11-14T21:16:18.825487",
+    "test_name": "initial_training",
+    "accuracy": 0.028112449799196786,
+    "avg_auc": 0.6207949597052195,
+    "num_samples": 1992,
+    "num_features": 38
   }
 ]

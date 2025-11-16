@@ -132,7 +132,14 @@ $descriptorspec = [
 ];
 
 // Gọi Python, truyền cờ --b64 và gửi chuỗi base64 qua stdin
-$cmd = escapeshellcmd($python) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg('--b64');
+// Nếu có file trạng thái orchestrator (được lưu bởi main.save_state), truyền đường dẫn đó
+$state_file = realpath(__DIR__ . '/../models/orchestrator_state.joblib');
+$state_arg = '';
+if ($state_file && file_exists($state_file)) {
+    $state_arg = ' ' . escapeshellarg('--state_path=' . $state_file);
+}
+
+$cmd = escapeshellcmd($python) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg('--b64') . $state_arg;
 $process = proc_open($cmd, $descriptorspec, $pipes);
 
 if (is_resource($process)) {
