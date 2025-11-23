@@ -59,7 +59,7 @@ class ExplainabilityAgent:
             'age': patient_data.get('Age', 'Unknown'),
             'gender': patient_data.get('Gender', 'Unknown'),
             'bacteria': patient_data.get('Bacteria', 'Unknown'),
-            'diabetes': 'Có' if patient_data.get('Diabetes', 0) == 1 else 'Không',
+            'diabetes': 'Có' if patient_data.get('Diabetes', 0) == 1 else 'Không',  
             'hypertension': 'Có' if patient_data.get('Hypertension', 0) == 1 else 'Không',
             'hospital_before': 'Có' if patient_data.get('Hospital_before', 0) == 1 else 'Không',
             'infection_freq': patient_data.get('Infection_Freq', 0)

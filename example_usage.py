@@ -5,6 +5,15 @@ Ví dụ sử dụng hệ thống Multi-Agent
 from main import MultiAgentOrchestrator
 import pandas as pd
 
+from agents.agent7_clinical_decision import (
+    ClinicalDecisionPipeline,
+    PatientDataAgent,
+    AntibioticPredictionAgent,
+    ExplainabilityEvaluationAgent,
+    CriticAgent,
+    DecisionAgent,
+)
+
 
 def example_train():
     """Ví dụ huấn luyện hệ thống"""
@@ -134,6 +143,65 @@ def example_batch_predict(orchestrator):
             print(f"  - {rec['antibiotic_name']} ({rec['sensitive_probability']:.1%})")
 
 
+def example_clinical_pipeline(orchestrator):
+    """Ví dụ sử dụng bộ agent mới để in kết quả ra màn hình"""
+    print("\n" + "=" * 80)
+    print("VÍ DỤ: CLINICAL DECISION PIPELINE")
+    print("=" * 80)
+
+    prediction_agent = AntibioticPredictionAgent(
+        predictor=orchestrator.agent3,
+        feature_columns=orchestrator.X_columns,
+    )
+
+    pipeline = ClinicalDecisionPipeline(
+        data_agent=PatientDataAgent(orchestrator.agent1, orchestrator.agent2),
+        prediction_agent=prediction_agent,
+        explain_agent=ExplainabilityEvaluationAgent(orchestrator.agent5),
+        critic_agent=CriticAgent(),
+        decision_agent=DecisionAgent(orchestrator.agent4),
+    )
+
+    patient = {
+        'age/gender': '60/F',
+        'Souches': 'S1200 Klebsiella pneumoniae',
+        'Diabetes': 'Yes',
+        'Hypertension': 'Yes',
+        'Hospital_before': 'No',
+        'Infection_Freq': 3.0,
+        'Collection_Date': '2024-03-01'
+    }
+
+    result = pipeline.run(patient_record=patient)
+
+    print("\n--- PREDICTIONS ---")
+    for ab, pred in result['predictions'].items():
+        proba = result['probabilities'][ab]
+        print(f"{ab:<15} -> label={pred}, P(sensitive)={proba:.2f}")
+
+    print("\n--- CRITIC FLAGS ---")
+    critic_report = result['critic_report']
+    if critic_report['flags']:
+        for flag in critic_report['flags']:
+            print(f"{flag.antibiotic}: {flag.reason} (p={flag.probability:.2f})")
+    else:
+        print("Không có cảnh báo.")
+
+    if critic_report['missing_fields']:
+        print("Thiếu dữ liệu:", ", ".join(critic_report['missing_fields']))
+
+    print("\n--- DECISION ACTIONS ---")
+    for action in result['decision']['primary_actions']:
+        print(f"- {action}")
+
+    print("\n--- THERAPY RECOMMENDATIONS ---")
+    for rec in result['decision']['therapy_recommendations']:
+        print(
+            f"{rec['rank']}. {rec['antibiotic_name']} "
+            f"(P={rec['sensitive_probability']:.2f}, {rec['confidence']})"
+        )
+
+
 if __name__ == "__main__":
     # Huấn luyện hệ thống
     orchestrator = example_train()
@@ -141,8 +209,13 @@ if __name__ == "__main__":
     # Dự đoán cho bệnh nhân mới
     example_predict(orchestrator)
     
+    # Chạy pipeline clinical mới
+    example_clinical_pipeline(orchestrator)
+
     # Dự đoán hàng loạt
     # example_batch_predict(orchestrator)
+
+
 
 
 

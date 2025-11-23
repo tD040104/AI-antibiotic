@@ -191,3 +191,9 @@ class ResistancePredictorAgent:
 
 
 
+
+
+
+
+
+
