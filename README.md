@@ -6,51 +6,49 @@ Hệ thống sử dụng kiến trúc multi-agent để phân tích và dự đo
 
 ```
 .
-├── data/                    # Dữ liệu (không upload raw large data nếu có)
+├── agents/                  # Bộ 5 agent MAS
+│   ├── patient_data_agent.py
+│   ├── prediction_agent.py
+│   ├── explainability_agent.py
+│   ├── critic_agent.py
+│   └── decision_agent.py
+├── data/                    # Dữ liệu huấn luyện
 │   └── Bacteria_dataset_Multiresictance.csv
-├── notebooks/               # Jupyter notebooks
-│   └── notebook.ipynb
-├── src/                     # Source code
-│   ├── preprocessing.py     # Data cleaning và feature engineering
-│   ├── modeling.py          # Machine learning model
-│   └── predict.py           # Prediction pipeline
-├── demo/                    # Demo application
-│   └── app.py              # Streamlit app
-├── models/                  # Trained models
-│   ├── model_latest.pkl
-│   └── orchestrator_state.joblib
-├── agents/                  # Legacy agents (backward compatibility)
-│   ├── agent1_data_cleaner.py
-│   ├── agent2_feature_engineer.py
-│   ├── agent3_resistance_predictor.py
-│   ├── agent4_treatment_recommender.py
-│   ├── agent5_explainability.py
-│   ├── agent6_continuous_learner.py
-│   └── agent7_clinical_decision.py
+├── demo/                    # Ứng dụng Streamlit (MAS)
+│   └── app.py
+├── example_usage.py         # Ví dụ train/predict/batch
 ├── logs/                    # Performance logs
-├── main.py                  # Main orchestrator
+├── main.py                  # MASClinicalDecisionSystem
+├── models/                  # Trained model & state (mas_model / mas_state)
 ├── requirements.txt
 └── README.md
 ```
 
 ## Kiến Trúc Hệ Thống
 
-Hệ thống được tổ chức lại theo cấu trúc module:
+Hệ thống MAS gồm 5 agent lõi được điều phối bởi `MASClinicalDecisionSystem`:
 
-### 1. Preprocessing (`src/preprocessing.py`)
-- **DataCleaner**: Làm sạch dữ liệu đầu vào, chuẩn hóa các cột, xử lý dữ liệu thiếu
-- **FeatureEngineer**: Mã hóa loại vi khuẩn, tạo biến lâm sàng, tạo đặc trưng tương tác
+1. **PatientDataAgent**  
+   - Nhập dữ liệu bệnh nhân + metadata vi khuẩn/kháng sinh  
+   - Làm sạch + tạo đặc trưng (tích hợp DataCleaner & FeatureEngineer)
 
-### 2. Modeling (`src/modeling.py`)
-- **ResistancePredictor**: Mô hình học máy chính (XGBoost/Random Forest) để dự đoán kháng thuốc
+2. **AntibioticPredictionAgent**  
+   - Bao bọc mô hình multi-output (XGBoost/RandomForest/GBM)  
+   - Huấn luyện, lưu/khôi phục và dự đoán xác suất nhạy/kháng
 
-### 3. Prediction (`src/predict.py`)
-- **Predictor**: Pipeline dự đoán hoàn chỉnh, xử lý từ input đến output
+3. **ExplainabilityEvaluationAgent**  
+   - Tạo báo cáo SHAP/LIME (nếu có) + giải thích tự nhiên  
+   - Tổng hợp yếu tố quan trọng ảnh hưởng kết quả
 
-### 4. Demo Application (`demo/app.py`)
-- **Streamlit App**: Ứng dụng web với:
-  - Input: Đặc trưng bệnh nhân (tuổi/giới tính, vi khuẩn, yếu tố nguy cơ, v.v.)
-  - Output: Thông tin kháng/nhạy cho từng kháng sinh
+4. **CriticAgent**  
+   - Gắn cờ ca bệnh có xác suất ~0.5 hoặc thiếu dữ liệu  
+   - Đề xuất yêu cầu xét nghiệm/điền bổ sung thông tin
+
+5. **DecisionAgent**  
+   - Kết hợp critic + xác suất nhạy để đề xuất kháng sinh  
+   - Xuất hành động chính (dùng thuốc, yêu cầu xét nghiệm, v.v.)
+
+`ClinicalDecisionPipeline` kết nối các agent trên cho cả huấn luyện và suy luận (được demo trong `example_usage.py` và `demo/app.py`).
 
 ## Cài Đặt
 
@@ -60,94 +58,64 @@ pip install -r requirements.txt
 
 ## Sử Dụng
 
-### 1. Huấn luyện hệ thống
+### 1. Huấn luyện hệ thống (MAS 5-Agent)
 
 ```python
-from main import MultiAgentOrchestrator
+from main import MASClinicalDecisionSystem
 
-# Khởi tạo orchestrator
-orchestrator = MultiAgentOrchestrator(model_type='xgboost')
-
-# Huấn luyện
-orchestrator.train('data/Bacteria_dataset_Multiresictance.csv')
+system = MASClinicalDecisionSystem(model_type="xgboost")
+system.train("data/Bacteria_dataset_Multiresictance.csv")
 ```
 
-Hoặc chạy từ command line:
+Sau khi huấn luyện, mô hình và trạng thái được lưu tại `models/mas_model.pkl`
+và `models/mas_state.joblib`.
 
-```bash
-python main.py
-```
-
-### 2. Sử dụng Predictor (cấu trúc mới)
+### 2. Tải lại mô hình MAS để suy luận
 
 ```python
-from src.predict import Predictor
+from main import MASClinicalDecisionSystem
 
-# Load model
-predictor = Predictor()
-predictor.load_model(
-    model_path="models/model_latest.pkl",
-    state_path="models/orchestrator_state.joblib"
+system = MASClinicalDecisionSystem()
+system.load(
+    model_path="models/mas_model.pkl",
+    state_path="models/mas_state.joblib",
 )
 
-# Dự đoán
-patient_data = {
-    'age/gender': '45/F',
-    'Souches': 'Escherichia coli',
-    'Diabetes': 'Yes',
-    'Hypertension': 'No',
-    'Hospital_before': 'Yes',
-    'Infection_Freq': 2.0,
-    'Collection_Date': '2024-01-15'
+patient = {
+    "age/gender": "45/F",
+    "Souches": "Escherichia coli",
+    "Diabetes": "Yes",
+    "Hypertension": "No",
+    "Hospital_before": "Yes",
+    "Infection_Freq": 2.0,
+    "Collection_Date": "2024-01-15",
 }
 
-result = predictor.predict(patient_data)
-
-# Xem kết quả
-print("Kháng sinh nhạy:", result['resistance_info']['sensitive_count'])
-print("Kháng sinh kháng:", result['resistance_info']['resistant_count'])
+result = system.predict(patient)
+print(result["decision"]["primary_actions"])
 ```
 
-### 3. Chạy Demo Application (Streamlit)
+### 3. Chạy ví dụ CLI
+
+```bash
+python example_usage.py
+```
+
+File ví dụ sẽ:
+- Huấn luyện hệ thống (hoặc bạn có thể sửa thành `system.load(...)`)
+- Dự đoán cho 1 bệnh nhân mẫu
+- Chạy batch 5 bệnh nhân đầu tiên trong CSV
+
+### 4. Chạy Demo Application (Streamlit)
 
 ```bash
 streamlit run demo/app.py
 ```
 
-Ứng dụng sẽ mở trong trình duyệt với:
-- Form nhập thông tin bệnh nhân
-- Hiển thị kết quả dự đoán kháng/nhạy
-- Biểu đồ và bảng chi tiết
-
-### 4. Sử dụng Orchestrator (backward compatibility)
-
-```python
-from main import MultiAgentOrchestrator
-
-# Load từ state đã lưu
-orchestrator = MultiAgentOrchestrator.load_from_state("models/orchestrator_state.joblib")
-
-# Dự đoán
-patient_data = {
-    'age/gender': '45/F',
-    'Souches': 'Escherichia coli',
-    'Diabetes': 'Yes',
-    'Hypertension': 'No',
-    'Hospital_before': 'Yes',
-    'Infection_Freq': 2.0,
-    'Collection_Date': '2024-01-15'
-}
-
-result = orchestrator.predict(patient_data)
-
-# In báo cáo
-print(result['report'])
-
-# Xem khuyến nghị
-for rec in result['recommendations']:
-    print(f"{rec['rank']}. {rec['antibiotic_name']}")
-    print(f"   Xác suất nhạy: {rec['sensitive_probability']:.1%}")
-```
+Ứng dụng sẽ yêu cầu đường dẫn `models/mas_model.pkl` và `models/mas_state.joblib`, sau đó cho phép nhập thông tin bệnh nhân và xem:
+- Nhãn nhạy/kháng + xác suất
+- Cảnh báo từ Critic Agent
+- Hành động ưu tiên + khuyến nghị kháng sinh
 
 ## Dữ Liệu Đầu Vào
 
@@ -184,7 +152,7 @@ File CSV cần có các cột:
 - Mô hình được lưu tự động sau khi huấn luyện
 - Có thể theo dõi hiệu suất và tự động retrain
 - Báo cáo được tạo tự động bằng tiếng Việt
-- Cấu trúc mới trong `src/` tương thích với cấu trúc cũ trong `agents/`
+- Toàn bộ pipeline MAS nằm trong `agents/` và `main.py`
 
 ## Tác Giả
 

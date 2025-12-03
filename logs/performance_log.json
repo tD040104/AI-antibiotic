@@ -134,5 +134,95 @@
     "avg_auc": 0.6207949597052195,
     "num_samples": 1992,
     "num_features": 38
+  },
+  {
+    "timestamp": "2025-12-02T23:48:42.579520",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-02T23:52:58.688643",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-02T23:54:25.965339",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-02T23:57:15.568061",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "precision": 0.7394139192212597,
+    "recall": 0.7783008472770778,
+    "f1_score": 0.7500198462216077,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-03T00:07:54.129199",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "precision": 0.7394139192212597,
+    "recall": 0.7783008472770778,
+    "f1_score": 0.7500198462216077,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-03T00:08:34.714810",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "precision": 0.7394139192212597,
+    "recall": 0.7783008472770778,
+    "f1_score": 0.7500198462216077,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-03T00:13:31.708011",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "precision": 0.7394139192212597,
+    "recall": 0.7783008472770778,
+    "f1_score": 0.7500198462216077,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-03T00:14:23.233869",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "precision": 0.7394139192212597,
+    "recall": 0.7783008472770778,
+    "f1_score": 0.7500198462216077,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
+  },
+  {
+    "timestamp": "2025-12-03T09:04:43.213703",
+    "test_name": "initial_training",
+    "accuracy": 0.025602409638554216,
+    "precision": 0.7394139192212597,
+    "recall": 0.7783008472770778,
+    "f1_score": 0.7500198462216077,
+    "avg_auc": 0.6212053096713447,
+    "num_samples": 1992,
+    "num_features": 39
   }
 ]
