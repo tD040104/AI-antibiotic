@@ -7,10 +7,13 @@ from __future__ import annotations
 import os
 import joblib
 import pandas as pd
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 from agents.patient_data_agent import PatientDataAgent, RecordType
-from agents.prediction_agent import AntibioticPredictionAgent
+from agents.prediction_agent import (
+    AntibioticPredictionAgent,
+    ModelSelectionAgent,
+)
 from agents.explainability_agent import ExplainabilityEvaluationAgent
 from agents.critic_agent import CriticAgent
 from agents.decision_agent import DecisionAgent
@@ -24,7 +27,7 @@ class ClinicalDecisionPipeline:
     def __init__(
         self,
         data_agent: Optional[PatientDataAgent] = None,
-        prediction_agent: Optional[AntibioticPredictionAgent] = None,
+        prediction_agent: Optional[Union[AntibioticPredictionAgent, ModelSelectionAgent]] = None,
         explain_agent: Optional[ExplainabilityEvaluationAgent] = None,
         critic_agent: Optional[CriticAgent] = None,
         decision_agent: Optional[DecisionAgent] = None,
@@ -86,20 +89,27 @@ class MASClinicalDecisionSystem:
         self,
         model_type: str = "xgboost",
         model_dir: str = "models",
+        auto_select_model: bool = False,
     ):
         self.model_dir = model_dir
         self.model_path = os.path.join(model_dir, "mas_model.pkl")
         self.state_path = os.path.join(model_dir, "mas_state.joblib")
+        self.auto_select_model = auto_select_model
 
         # Khởi tạo các agent cốt lõi
-        predictor_agent = AntibioticPredictionAgent(
-            predictor=None,
-        )
-        if predictor_agent.predictor.model_type != model_type:
-            predictor_agent.predictor.model_type = model_type
+        if auto_select_model:
+            # Sử dụng ModelSelectionAgent để tự động chọn mô hình tốt nhất
+            self.prediction_agent = ModelSelectionAgent()
+        else:
+            # Sử dụng một agent cụ thể
+            predictor_agent = AntibioticPredictionAgent(
+                predictor=None,
+            )
+            if predictor_agent.predictor.model_type != model_type:
+                predictor_agent.predictor.model_type = model_type
+            self.prediction_agent = predictor_agent
 
         self.data_agent = PatientDataAgent()
-        self.prediction_agent = predictor_agent
         self.explain_agent = ExplainabilityEvaluationAgent()
         self.critic_agent = CriticAgent()
         self.decision_agent = DecisionAgent()
@@ -124,9 +134,24 @@ class MASClinicalDecisionSystem:
         csv_path: str,
         test_size: float = 0.2,
         random_state: int = 42,
+        auto_select_model: bool = False,
+        scoring_metric: str = "composite",
     ) -> Dict:
         """
         Huấn luyện toàn bộ MAS pipeline từ file CSV.
+        
+        Args:
+            csv_path: Đường dẫn đến file CSV chứa dữ liệu huấn luyện
+            test_size: Tỷ lệ test set (mặc định: 0.2)
+            random_state: Random seed (mặc định: 42)
+            auto_select_model: Nếu True, sẽ huấn luyện cả 3 mô hình và tự động chọn mô hình tốt nhất
+            scoring_metric: Metric để chọn mô hình tốt nhất khi auto_select_model=True
+                - "composite": Kết hợp test_accuracy, test_precision, test_recall, test_f1, test_auc_mean (mặc định)
+                - "accuracy": Chỉ dùng test_accuracy
+                - "precision": Chỉ dùng test_precision
+                - "recall": Chỉ dùng test_recall
+                - "f1": Chỉ dùng test_f1
+                - "auc": Chỉ dùng test_auc_mean
         """
         print("=" * 80)
         print("BẮT ĐẦU HUẤN LUYỆN MAS CLINICAL DECISION SYSTEM")
@@ -137,12 +162,36 @@ class MASClinicalDecisionSystem:
         print(f"  ✓ Dữ liệu huấn luyện: {len(X)} mẫu, {len(feature_cols)} đặc trưng")
 
         y = y.fillna(0).astype(int)
-        results = self.prediction_agent.train(
-            X,
-            y,
-            test_size=test_size,
-            random_state=random_state,
-        )
+        
+        if auto_select_model:
+            print("\n  ⚙️  Chế độ tự động chọn mô hình tốt nhất được kích hoạt")
+            print("  → Sử dụng 3 agent riêng biệt: XGBoost, RandomForest, GradientBoosting")
+            if not isinstance(self.prediction_agent, ModelSelectionAgent):
+                # Nếu chưa khởi tạo ModelSelectionAgent, tạo mới
+                self.prediction_agent = ModelSelectionAgent()
+                self.pipeline.prediction_agent = self.prediction_agent
+            
+            results = self.prediction_agent.train_and_select_best(
+                X,
+                y,
+                test_size=test_size,
+                random_state=random_state,
+                scoring_metric=scoring_metric,
+            )
+        else:
+            if isinstance(self.prediction_agent, ModelSelectionAgent):
+                # Nếu đang dùng ModelSelectionAgent nhưng không muốn auto_select, chuyển về single agent
+                predictor_agent = AntibioticPredictionAgent(predictor=None)
+                predictor_agent.predictor.model_type = "xgboost"
+                self.prediction_agent = predictor_agent
+                self.pipeline.prediction_agent = self.prediction_agent
+            
+            results = self.prediction_agent.train(
+                X,
+                y,
+                test_size=test_size,
+                random_state=random_state,
+            )
 
         self.feature_columns = feature_cols
         self.prediction_agent.set_feature_columns(feature_cols)
@@ -166,10 +215,17 @@ class MASClinicalDecisionSystem:
         path = filepath or self.state_path
         self._ensure_model_dir()
 
+        # Xác định model_type dựa trên loại agent
+        if isinstance(self.prediction_agent, ModelSelectionAgent):
+            model_type = self.prediction_agent.selected_model_type or "unknown"
+        else:
+            model_type = self.prediction_agent.predictor.model_type
+        
         state = {
             "feature_columns": self.feature_columns,
             "data_agent": self.data_agent,
-            "model_type": self.prediction_agent.predictor.model_type,
+            "model_type": model_type,
+            "auto_select_model": self.auto_select_model,
         }
         joblib.dump(state, path)
         print(f"  ✓ Đã lưu trạng thái MAS tại {path}")
@@ -188,9 +244,27 @@ class MASClinicalDecisionSystem:
         if not os.path.exists(model_file) or not os.path.exists(state_file):
             raise FileNotFoundError("Không tìm thấy file mô hình hoặc state để load.")
 
-        self.prediction_agent.load_model(model_file)
         state = joblib.load(state_file)
+        auto_select = state.get("auto_select_model", False)
+        model_type = state.get("model_type", "xgboost")
+        
+        # Khởi tạo lại agent dựa trên state đã lưu
+        if auto_select:
+            if not isinstance(self.prediction_agent, ModelSelectionAgent):
+                self.prediction_agent = ModelSelectionAgent()
+                self.pipeline.prediction_agent = self.prediction_agent
+            # Load model cho agent được chọn
+            self.prediction_agent.load_model(model_file, model_type)
+        else:
+            if isinstance(self.prediction_agent, ModelSelectionAgent):
+                predictor_agent = AntibioticPredictionAgent(predictor=None)
+                predictor_agent.predictor.model_type = model_type
+                self.prediction_agent = predictor_agent
+                self.pipeline.prediction_agent = self.prediction_agent
+            self.prediction_agent.load_model(model_file)
+        
         self.feature_columns = state.get("feature_columns")
+        self.auto_select_model = auto_select
         self.prediction_agent.set_feature_columns(self.feature_columns or [])
         self.pipeline.prediction_agent.set_feature_columns(self.feature_columns or [])
 
@@ -229,7 +303,11 @@ def main():
     """
     Ví dụ chạy end-to-end: train + predict 1 bệnh nhân mẫu.
     """
-    system = MASClinicalDecisionSystem(model_type="xgboost")
+    # Sử dụng auto_select_model=True để tự động chọn mô hình tốt nhất từ 3 agent
+    system = MASClinicalDecisionSystem(
+        model_type="xgboost",
+        auto_select_model=True  # Sử dụng 3 agent riêng biệt
+    )
 
     csv_path = "data/Bacteria_dataset_Multiresictance.csv"
     if not os.path.exists(csv_path):
@@ -239,7 +317,13 @@ def main():
         print("❌ Không tìm thấy file dữ liệu huấn luyện.")
         return
 
-    system.train(csv_path, test_size=0.2, random_state=42)
+    system.train(
+        csv_path, 
+        test_size=0.2, 
+        random_state=42,
+        auto_select_model=True,  # Đã được set trong __init__
+        scoring_metric="composite"  # Hoặc "accuracy", "f1", "auc"
+    )
 
     sample_patient = {
         "age/gender": "45/F",
@@ -248,7 +332,7 @@ def main():
         "Hypertension": "No",
         "Hospital_before": "Yes",
         "Infection_Freq": 2.0,
-        "Collection_Date": "2024-01-15",
+        "Collection_Date": "2024-01-15",    
     }
 
     print("\n" + "=" * 80)
