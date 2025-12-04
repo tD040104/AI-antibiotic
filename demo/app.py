@@ -115,7 +115,14 @@ with st.form("patient_form"):
         diabetes = st.selectbox("Tiểu đường", ["No", "Yes"])
     with col2:
         hospital_before = st.selectbox("Tiền sử nhập viện", ["No", "Yes"])
-        infection_freq = st.number_input("Tần suất nhiễm trùng", 0.0, 10.0, 1.0, step=0.1)
+        # Tần suất nhiễm trùng: mỗi lần bấm "+" tăng 1 đơn vị, không vượt quá 3
+        infection_freq = st.number_input(
+            "Tần suất nhiễm trùng",
+            min_value=0,
+            max_value=3,
+            value=1,
+            step=1,
+        )
         collection_date = st.date_input("Ngày thu thập mẫu", value=pd.Timestamp.now().date())
         hypertension = st.selectbox("Tăng huyết áp", ["No", "Yes"])
 

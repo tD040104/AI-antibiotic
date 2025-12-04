@@ -51,12 +51,12 @@ class DataCleaner:
 
     def _parse_age_gender(self, df: pd.DataFrame) -> pd.DataFrame:
         def extract_age_gender(value):
-            if pd.isna(value) or value == "":
+            if pd.isna(value) or value == "":   #kiểm tra dữ liệu rỗng
                 return None, None
             value_str = str(value)
-            age_match = re.search(r"(\d+)", value_str)
-            gender_match = re.search(r"([FM])", value_str.upper())
-            age = int(age_match.group(1)) if age_match else None
+            age_match = re.search(r"(\d+)", value_str) #tìm số 
+            gender_match = re.search(r"([FM])", value_str.upper()) #tìm kí tự
+            age = int(age_match.group(1)) if age_match else None #lấy giá trị nếu tìm thấy
             gender = gender_match.group(1) if gender_match else None
             return age, gender
 
@@ -126,7 +126,18 @@ class DataCleaner:
             if value_str in ["unknown", "error", "nan", "missing", "?", ""]:
                 return 0.0
             try:
-                return float(value)
+                # Chuẩn hoá giá trị tần suất nhiễm trùng:
+                # - Chuyển về số
+                # - Giới hạn trong khoảng [0, 3]
+                # - Bước tăng là 1 đơn vị (0, 1, 2, 3)
+                freq = float(value)
+                if freq < 0:
+                    freq = 0.0
+                if freq > 3:
+                    freq = 3.0
+                # Làm tròn về bậc gần nhất (0, 1, 2, 3)
+                freq = round(freq)
+                return float(freq)
             except Exception:
                 return 0.0
 
@@ -205,15 +216,11 @@ class FeatureEngineer:
         df = self._encode_bacteria(df)
         df = self._create_clinical_features(df)
         df = self._normalize_infection_freq(df)
-        df = self._create_interaction_features(df)
         return df
 
     def _encode_bacteria(self, df: pd.DataFrame) -> pd.DataFrame:
         if "Bacteria" not in df.columns:
             df["Bacteria"] = "Unknown"
-        bacteria_dummies = pd.get_dummies(df["Bacteria"], prefix="Bacteria")
-        df = pd.concat([df, bacteria_dummies], axis=1)
-
         if self.bacteria_encoder is None:
             from sklearn.preprocessing import LabelEncoder
 
@@ -228,6 +235,20 @@ class FeatureEngineer:
         return df
 
     def _create_clinical_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Tạo các feature lâm sàng cần thiết cho mô hình với bộ 10 feature đã chọn.
+        Chỉ giữ lại các cột:
+        - Diabetes
+        - Hypertension
+        - Hospital_before
+        - Infection_Freq
+        - High_risk_diabetes_hospital
+        - High_risk_hypertension_hospital
+        - High_infection_freq
+        - Age
+        - Gender_encoded
+        (Bacteria_encoded được tạo trong _encode_bacteria)
+        """
         df["Diabetes"] = df.get("Diabetes", 0)
         df["Hypertension"] = df.get("Hypertension", 0)
         df["Hospital_before"] = df.get("Hospital_before", 0)
@@ -239,69 +260,64 @@ class FeatureEngineer:
         df["High_risk_hypertension_hospital"] = (
             (df["Hypertension"] == 1) & (df["Hospital_before"] == 1)
         ).astype(int)
-        df["Total_risk_factors"] = df["Diabetes"] + df["Hypertension"] + df["Hospital_before"]
 
-        if "Age" in df.columns:
-            df["Age_infection_interaction"] = df["Age"] * df["Infection_Freq"]
-            df["Age_group"] = pd.cut(
-                df["Age"], bins=[0, 18, 35, 50, 65, 100],
-                labels=["Child", "Young", "Middle", "Senior", "Elderly"]
-            )
-            age_dummies = pd.get_dummies(df["Age_group"], prefix="Age_group")
-            df = pd.concat([df, age_dummies], axis=1)
+        # Đảm bảo Age tồn tại
+        df["Age"] = df.get("Age", 0)
 
+        # Mã hoá giới tính dạng nhị phân
         if "Gender" in df.columns:
             df["Gender_encoded"] = df["Gender"].map({"Female": 0, "Male": 1}).fillna(0)
-            gender_dummies = pd.get_dummies(df["Gender"], prefix="Gender")
-            df = pd.concat([df, gender_dummies], axis=1)
+        else:
+            df["Gender_encoded"] = 0
 
         df["High_infection_freq"] = (df["Infection_Freq"] >= 2.0).astype(int)
-        df["Age"] = df.get("Age", 0)
-        df["Risk_score"] = (
-            df["Diabetes"] * 1.5 +
-            df["Hypertension"] * 1.2 +
-            df["Hospital_before"] * 2.0 +
-            df["High_infection_freq"] * 1.8 +
-            (df["Age"] / 100.0)
-        )
         return df
 
     def _normalize_infection_freq(self, df: pd.DataFrame) -> pd.DataFrame:
         df["Infection_Freq"] = df.get("Infection_Freq", 0.0)
-        df["Infection_Freq_log"] = np.log1p(df["Infection_Freq"])
-        values = df[["Infection_Freq"]].values
-        from sklearn.preprocessing import StandardScaler
+        # df["Infection_Freq_log"] = np.log1p(df["Infection_Freq"])
+        # values = df[["Infection_Freq"]].values
+        # from sklearn.preprocessing import StandardScaler
 
-        if self.scaler is None:
-            self.scaler = StandardScaler()
-            scaled = self.scaler.fit_transform(values)
-            self.is_fitted = True
-        else:
-            scaled = self.scaler.transform(values)
-        df["Infection_Freq_scaled"] = scaled.flatten()
-        return df
-
-    def _create_interaction_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        if "Bacteria_encoded" in df.columns:
-            df["Bacteria_risk_interaction"] = (
-                df["Bacteria_encoded"] * df.get("Total_risk_factors", 0)
-            )
-        if "Age" in df.columns:
-            df["Age_infection_product"] = df["Age"] * df.get("Infection_Freq", 0.0)
+        # if self.scaler is None:
+        #     self.scaler = StandardScaler()
+        #     scaled = self.scaler.fit_transform(values)
+        #     self.is_fitted = True
+        # else:
+        #     scaled = self.scaler.transform(values)
+        # df["Infection_Freq_scaled"] = scaled.flatten()
         return df
 
     def get_feature_columns(self, df: pd.DataFrame) -> List[str]:
-        exclude_cols = [
-            "ID", "Name", "Email", "Address", "age/gender", "Souches",
-            "Collection_Date", "Collection_Date_parsed", "Notes",
-            "Bacteria", "Gender", "Age_group", "Days_since_collection",
+        """
+        Chỉ sử dụng đúng 10 feature mà người dùng mong muốn làm đầu vào mô hình:
+        - Age
+        - Gender_encoded
+        - Diabetes
+        - Hypertension
+        - Hospital_before
+        - Infection_Freq
+        - Bacteria_encoded
+        - High_infection_freq
+        - High_risk_diabetes_hospital
+        - High_risk_hypertension_hospital
+
+        Hàm sẽ trả về giao giữa danh sách trên và các cột thực tế có trong df
+        (đề phòng trường hợp một số cột chưa được tạo).
+        """
+        desired_features = [
+            "Age",
+            "Gender_encoded",
+            "Diabetes",
+            "Hypertension",
+            "Hospital_before",
+            "Infection_Freq",
+            "Bacteria_encoded",
+            "High_infection_freq",
+            "High_risk_diabetes_hospital",
+            "High_risk_hypertension_hospital",
         ]
-        exclude_cols.extend(ANTIBIOTIC_CODES)
-        antibiotic_binary_cols = []
-        for ab in ANTIBIOTIC_CODES:
-            antibiotic_binary_cols.extend([f"{ab}_binary", f"{ab}_S", f"{ab}_R", f"{ab}_I"])
-        exclude_cols.extend(antibiotic_binary_cols)
-        return [col for col in df.columns if col not in exclude_cols]
+        return [col for col in desired_features if col in df.columns]
 
 
 class PatientDataAgent:
@@ -403,6 +419,35 @@ class PatientDataAgent:
                 merged[new_col] = value
         return merged
 
+if __name__ == "__main__":
+    import os
+    
+    # Tự động lấy thư mục chứa file .py này
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    CSV_FILE = "aaa.csv"   # ← tên file của bạn, giữ nguyên
+    
+    csv_path = os.path.join(SCRIPT_DIR, CSV_FILE)
+    
+    if not os.path.exists(csv_path):
+        print(f"Không tìm thấy file: {CSV_FILE}")
+        print(f"Đang tìm ở: {SCRIPT_DIR}")
+        print("\nCác file trong thư mục hiện tại:")
+        for f in os.listdir(SCRIPT_DIR):
+            print("  -", f)
+        exit()
+    
+    print(f"Đang đọc file: {csv_path}")
+    df_raw = pd.read_csv(csv_path)
+    print(f"Đã load thành công {len(df_raw)} bản ghi, {df_raw.shape[1]} cột")
 
+    agent = PatientDataAgent()
+    X, y, feature_cols = agent.prepare_training_dataset(df_raw)
 
-
+    print("\n" + "="*70)
+    print("DANH SÁCH FEATURE_COLS (các cột sẽ được dùng để train mô hình)")
+    print("="*70)
+    for i, col in enumerate(sorted(feature_cols), 1):
+        print(f"{i:3d}. {col}")
+    print("="*70)
+    print(f"Tổng cộng: {len(feature_cols)} features")
+    print(f"Shape X: {X.shape} | Shape y: {y.shape}")

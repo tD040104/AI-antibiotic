@@ -295,7 +295,7 @@ class ResistancePredictorAgent:
             if idx < len(probabilities):
                 proba_dict[col] = probabilities[idx][:, 1]
 
-        proba_df = pd.DataFrame(proba_dict, index=X.index)
+        proba_df = pd.DataFrame(proba_dict, index=X.index) #xác xuất nhãn "positive"
         return pred_df, proba_df
 
     def predict_proba(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -460,11 +460,11 @@ class ModelSelectionAgent:
             test_size: Tỷ lệ test set
             random_state: Random seed
             scoring_metric: Metric để chọn mô hình tốt nhất
-                - "composite": Kết hợp test_accuracy, test_f1, test_precision, test_recall, test_auc_mean (mặc định)
+                - "composite": Kết hợp test_accuracy, test_precision, test_recall, test_f1, test_auc_mean (mặc định)
                 - "accuracy": Chỉ dùng test_accuracy
-                - "f1": Chỉ dùng test_f1
                 - "precision": Chỉ dùng test_precision
                 - "recall": Chỉ dùng test_recall
+                - "f1": Chỉ dùng test_f1
                 - "auc": Chỉ dùng test_auc_mean
         
         Returns:
@@ -520,12 +520,12 @@ class ModelSelectionAgent:
             
             if scoring_metric == "accuracy":
                 score = results["test_accuracy"]
-            elif scoring_metric == "f1":
-                score = results["test_f1"]
             elif scoring_metric == "precision":
                 score = results["test_precision"]
             elif scoring_metric == "recall":
                 score = results["test_recall"]
+            elif scoring_metric == "f1":
+                score = results["test_f1"]
             elif scoring_metric == "auc":
                 score = results["test_auc_mean"]
             else:  # composite (mặc định)
@@ -549,9 +549,9 @@ class ModelSelectionAgent:
         self.selected_agent = best_agent
         self.selected_model_type = best_model_type
         
-        print("\n" + "=" * 80)
+        print("\n" + "=" * 100)
         print("KẾT QUẢ SO SÁNH CÁC AGENT")
-        print("=" * 80)
+        print("=" * 100)
         print(f"{'Agent':<30} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1':<10} {'AUC':<10} {'Score':<10}")
         print("-" * 100)
         for model_type, data in all_results.items():
