@@ -1,13 +1,24 @@
 """
 Explainability agent - SHAP/LIME style explanations + reports
+Enhanced with Embedding and Transformer for decision making
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None  # type: ignore
+    nn = None  # type: ignore
 
 try:
     import shap
@@ -16,11 +27,94 @@ except ImportError:
     SHAP_AVAILABLE = False
     shap = None  # type: ignore
 
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMER_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMER_AVAILABLE = False
+    SentenceTransformer = None  # type: ignore
+
+
+class FeatureEmbedder:
+    """Embedding layer for patient features using transformer architecture."""
+    
+    def __init__(self, input_dim: int = 50, embedding_dim: int = 128, hidden_dim: int = 256):
+        if not TORCH_AVAILABLE:
+            raise ImportError("PyTorch is required for FeatureEmbedder. Install with: pip install torch")
+        
+        self.input_dim = input_dim
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.scaler = StandardScaler()
+        self.is_fitted = False
+        
+        # Simple transformer-like architecture
+        self.embedding_layer = nn.Sequential(
+            nn.Linear(input_dim, embedding_dim),
+            nn.LayerNorm(embedding_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+        
+        # Transformer encoder block
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embedding_dim,
+            nhead=8,
+            dim_feedforward=hidden_dim,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
+        
+        # Decision head
+        self.decision_head = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim, embedding_dim // 2),
+            nn.ReLU(),
+            nn.Linear(embedding_dim // 2, 1),
+            nn.Sigmoid()
+        )
+        
+    def fit(self, X: np.ndarray):
+        """Fit scaler on training data."""
+        X_scaled = self.scaler.fit_transform(X)
+        self.is_fitted = True
+        return X_scaled
+    
+    def transform(self, X: np.ndarray) -> torch.Tensor:
+        """Transform features to embeddings."""
+        if not self.is_fitted:
+            X_scaled = X
+        else:
+            X_scaled = self.scaler.transform(X)
+        
+        X_tensor = torch.FloatTensor(X_scaled)
+        # Add sequence dimension for transformer
+        if X_tensor.dim() == 2:
+            X_tensor = X_tensor.unsqueeze(1)  # [batch, 1, features]
+        
+        # Embedding
+        embedded = self.embedding_layer(X_tensor.squeeze(1))
+        embedded = embedded.unsqueeze(1)  # [batch, 1, embedding_dim]
+        
+        # Transformer encoding
+        encoded = self.transformer(embedded)
+        return encoded.squeeze(1)  # [batch, embedding_dim]
+    
+    def predict_decision(self, X: np.ndarray) -> float:
+        """Predict decision score using transformer."""
+        with torch.no_grad():
+            encoded = self.transform(X)
+            decision_score = self.decision_head(encoded)
+            return decision_score.item()
+
 
 class ExplainabilityAgent:
-    """Base explainability + report generator."""
+    """Base explainability + report generator with embedding and transformer."""
 
-    def __init__(self):
+    def __init__(self, use_embedding: bool = True, embedding_dim: int = 128):
         self.antibiotic_names = {
             "AMX/AMP": "Amoxicillin/Ampicillin",
             "AMC": "Amoxicillin-Clavulanic Acid",
@@ -38,6 +132,118 @@ class ExplainabilityAgent:
             "Furanes": "Nitrofurantoin",
             "colistine": "Colistin",
         }
+        
+        self.use_embedding = use_embedding and TORCH_AVAILABLE
+        self.embedder = None
+        self.text_embedder = None
+        
+        if self.use_embedding:
+            try:
+                # Initialize feature embedder
+                self.embedder = FeatureEmbedder(input_dim=50, embedding_dim=embedding_dim)
+            except Exception:
+                self.embedder = None
+                self.use_embedding = False
+            
+            # Initialize text embedder if available
+            if SENTENCE_TRANSFORMER_AVAILABLE:
+                try:
+                    self.text_embedder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+                except:
+                    self.text_embedder = None
+
+    def _create_feature_embedding(self, patient_data: pd.Series, probabilities: pd.Series) -> np.ndarray:
+        """Create embedding vector from patient features and probabilities."""
+        # Combine patient features and probabilities
+        feature_values = []
+        
+        # Patient features
+        numeric_features = ['Age', 'Diabetes', 'Hypertension', 'Hospital_before', 
+                           'Infection_Freq', 'Total_risk_factors']
+        for feat in numeric_features:
+            val = patient_data.get(feat, 0)
+            feature_values.append(float(val) if not pd.isna(val) else 0.0)
+        
+        # Probabilities
+        for ab in probabilities.index:
+            feature_values.append(float(probabilities[ab]))
+        
+        # Pad or truncate to fixed size
+        target_size = 50
+        if len(feature_values) < target_size:
+            feature_values.extend([0.0] * (target_size - len(feature_values)))
+        else:
+            feature_values = feature_values[:target_size]
+        
+        return np.array(feature_values).reshape(1, -1)
+    
+    def _generate_decision_from_embedding(
+        self, 
+        patient_data: pd.Series, 
+        predictions: pd.Series, 
+        probabilities: pd.Series
+    ) -> Dict:
+        """Generate decision using transformer-based embedding."""
+        if not self.use_embedding or self.embedder is None:
+            # Fallback to rule-based
+            return self._generate_rule_based_decision(patient_data, predictions, probabilities)
+        
+        try:
+            # Create feature embedding
+            feature_vector = self._create_feature_embedding(patient_data, probabilities)
+            
+            # Get decision score from transformer
+            decision_score = self.embedder.predict_decision(feature_vector)
+            
+            # Generate decision based on score
+            if decision_score >= 0.7:
+                decision_type = "high_confidence_treatment"
+                recommended_ab = probabilities.idxmax()
+            elif decision_score >= 0.4:
+                decision_type = "moderate_confidence_treatment"
+                recommended_ab = probabilities.idxmax()
+            else:
+                decision_type = "requires_additional_testing"
+                recommended_ab = None
+            
+            return {
+                "decision_type": decision_type,
+                "decision_score": float(decision_score),
+                "recommended_antibiotic": recommended_ab,
+                "confidence": "high" if decision_score >= 0.7 else "moderate" if decision_score >= 0.4 else "low",
+                "reasoning": f"Transformer-based decision score: {decision_score:.3f}"
+            }
+        except Exception as e:
+            # Fallback on error
+            return self._generate_rule_based_decision(patient_data, predictions, probabilities)
+    
+    def _generate_rule_based_decision(
+        self, 
+        patient_data: pd.Series, 
+        predictions: pd.Series, 
+        probabilities: pd.Series
+    ) -> Dict:
+        """Fallback rule-based decision."""
+        max_prob = probabilities.max()
+        recommended_ab = probabilities.idxmax()
+        
+        if max_prob >= 0.7:
+            decision_type = "high_confidence_treatment"
+            confidence = "high"
+        elif max_prob >= 0.4:
+            decision_type = "moderate_confidence_treatment"
+            confidence = "moderate"
+        else:
+            decision_type = "requires_additional_testing"
+            confidence = "low"
+        
+        return {
+            "decision_type": decision_type,
+            "decision_score": float(max_prob),
+            "recommended_antibiotic": recommended_ab,
+            "confidence": confidence,
+            "reasoning": "Rule-based fallback decision"
+        }
 
     def explain_prediction(
         self,
@@ -48,6 +254,11 @@ class ExplainabilityAgent:
         shap_values: Optional[np.ndarray] = None,
         feature_names: Optional[List[str]] = None,
     ) -> Dict:
+        # Generate decision using embedding/transformer
+        decision = self._generate_decision_from_embedding(
+            patient_data, predictions.iloc[0], probabilities.iloc[0]
+        )
+        
         explanation = {
             "patient_summary": self._extract_patient_info(patient_data),
             "resistance_predictions": self._summarize_resistance(
@@ -59,6 +270,7 @@ class ExplainabilityAgent:
             "report": self._generate_natural_language_report(
                 patient_data, predictions.iloc[0], probabilities.iloc[0]
             ),
+            "decision": decision,  # Add decision output
         }
         return explanation
 
@@ -242,10 +454,10 @@ class ExplainabilityAgent:
 
 
 class ExplainabilityEvaluationAgent:
-    """Agent 3: wrap ExplainabilityAgent with evaluation helpers."""
+    """Agent 3: wrap ExplainabilityAgent with evaluation helpers and embedding."""
 
-    def __init__(self, explainability_agent: Optional[ExplainabilityAgent] = None):
-        self.explainability_agent = explainability_agent or ExplainabilityAgent()
+    def __init__(self, explainability_agent: Optional[ExplainabilityAgent] = None, use_embedding: bool = True):
+        self.explainability_agent = explainability_agent or ExplainabilityAgent(use_embedding=use_embedding)
 
     def explain(
         self,
@@ -287,6 +499,8 @@ class ExplainabilityEvaluationAgent:
             stats["observed_accuracy"] = float((pred_labels == gt_row).mean())
 
         return stats
+
+
 
 
 

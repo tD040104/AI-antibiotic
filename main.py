@@ -60,6 +60,7 @@ class ClinicalDecisionPipeline:
             probabilities,
             critic_report,
             patient_series,
+            explanation=explanation,
         )
 
         return {
@@ -210,16 +211,17 @@ class MASClinicalDecisionSystem:
 
         state = joblib.load(state_file)
         model_type = state.get("model_type", "xgboost")
+        feature_columns = state.get("feature_columns", [])
         
         # Luôn sử dụng ModelSelectionAgent và load model cho agent được chọn
         if not isinstance(self.prediction_agent, ModelSelectionAgent):
             self.prediction_agent = ModelSelectionAgent()
             self.pipeline.prediction_agent = self.prediction_agent
         
-        # Load model cho agent được chọn
-        self.prediction_agent.load_model(model_file, model_type)
+        # Load model cho agent được chọn (cần feature_columns)
+        self.prediction_agent.load_model(model_file, model_type, feature_columns)
         
-        self.feature_columns = state.get("feature_columns")
+        self.feature_columns = feature_columns
         self.prediction_agent.set_feature_columns(self.feature_columns or [])
         self.pipeline.prediction_agent.set_feature_columns(self.feature_columns or [])
 

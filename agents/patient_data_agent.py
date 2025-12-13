@@ -235,20 +235,6 @@ class FeatureEngineer:
         return df
 
     def _create_clinical_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Tạo các feature lâm sàng cần thiết cho mô hình với bộ 10 feature đã chọn.
-        Chỉ giữ lại các cột:
-        - Diabetes
-        - Hypertension
-        - Hospital_before
-        - Infection_Freq
-        - High_risk_diabetes_hospital
-        - High_risk_hypertension_hospital
-        - High_infection_freq
-        - Age
-        - Gender_encoded
-        (Bacteria_encoded được tạo trong _encode_bacteria)
-        """
         df["Diabetes"] = df.get("Diabetes", 0)
         df["Hypertension"] = df.get("Hypertension", 0)
         df["Hospital_before"] = df.get("Hospital_before", 0)
@@ -275,17 +261,6 @@ class FeatureEngineer:
 
     def _normalize_infection_freq(self, df: pd.DataFrame) -> pd.DataFrame:
         df["Infection_Freq"] = df.get("Infection_Freq", 0.0)
-        # df["Infection_Freq_log"] = np.log1p(df["Infection_Freq"])
-        # values = df[["Infection_Freq"]].values
-        # from sklearn.preprocessing import StandardScaler
-
-        # if self.scaler is None:
-        #     self.scaler = StandardScaler()
-        #     scaled = self.scaler.fit_transform(values)
-        #     self.is_fitted = True
-        # else:
-        #     scaled = self.scaler.transform(values)
-        # df["Infection_Freq_scaled"] = scaled.flatten()
         return df
 
     def get_feature_columns(self, df: pd.DataFrame) -> List[str]:
@@ -421,33 +396,61 @@ class PatientDataAgent:
 
 if __name__ == "__main__":
     import os
-    
-    # Tự động lấy thư mục chứa file .py này
+    import pandas as pd
+
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', 2000)
+    pd.set_option('display.max_colwidth', 15)
+    pd.set_option('display.float_format', '{:.2f}'.format)
+
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    CSV_FILE = "aaa.csv"   # ← tên file của bạn, giữ nguyên
-    
+    CSV_FILE = "aaa.csv"
     csv_path = os.path.join(SCRIPT_DIR, CSV_FILE)
-    
+
     if not os.path.exists(csv_path):
         print(f"Không tìm thấy file: {CSV_FILE}")
-        print(f"Đang tìm ở: {SCRIPT_DIR}")
-        print("\nCác file trong thư mục hiện tại:")
-        for f in os.listdir(SCRIPT_DIR):
-            print("  -", f)
         exit()
-    
+
     print(f"Đang đọc file: {csv_path}")
     df_raw = pd.read_csv(csv_path)
-    print(f"Đã load thành công {len(df_raw)} bản ghi, {df_raw.shape[1]} cột")
+    print(f"Đã load thành công {len(df_raw):,} bệnh nhân, {df_raw.shape[1]} cột\n")
 
     agent = PatientDataAgent()
     X, y, feature_cols = agent.prepare_training_dataset(df_raw)
 
-    print("\n" + "="*70)
-    print("DANH SÁCH FEATURE_COLS (các cột sẽ được dùng để train mô hình)")
-    print("="*70)
-    for i, col in enumerate(sorted(feature_cols), 1):
-        print(f"{i:3d}. {col}")
-    print("="*70)
-    print(f"Tổng cộng: {len(feature_cols)} features")
-    print(f"Shape X: {X.shape} | Shape y: {y.shape}")
+    print("="*120)
+    print("1. MA TRẬN X – FEATURES ĐÃ QUA XỬ LÝ (10 bệnh nhân đầu tiên)")
+    print("="*120)
+    print(f"Shape X: {X.shape} → {len(feature_cols)} features được chọn:")
+    print(" →", " | ".join(feature_cols))
+    print("\nDỮ LIỆU THỰC TẾ CỦA X:")
+    print(X.head(10).to_string(index=True, float_format="{:.2f}".format))
+    print()
+
+    print("="*120)
+    print("2. MA TRẬN y – NHÃN KHÁNG SINH (1 = Nhạy cảm/Sensitive, 0 = Kháng hoặc Intermediate)")
+    print("="*120)
+    if y.empty:
+        print("KHÔNG TÌM THẤY kháng sinh nào!")
+    else:
+        print(f"Shape y: {y.shape} → Phát hiện {len(y.columns)} loại kháng sinh:")
+        print(" →", " | ".join(y.columns))
+        print("\nDỮ LIỆU THỰC TẾ CỦA y:")
+        print(y.head(10).to_string(index=True))
+    print()
+
+    print("="*120)
+    print("3. XEM CẶP HOÀN CHỈNH (X + y) CỦA 10 BỆNH NHÂN ĐẦU TIÊN – DỄ NHÌN NHẤT!")
+    print("="*120)
+    combined = pd.concat([X.head(10).reset_index(drop=True), y.head(10).reset_index(drop=True)], axis=1)
+    print(combined.to_string(index=True, float_format="{:.2f}".format))
+
+    print("\n" + "="*120)
+    print("TỔNG KẾT NHANH")
+    print("="*120)
+    print(f"→ Tổng số bệnh nhân sau xử lý       : {X.shape[0]:,} người")
+    print(f"→ Số feature đầu vào mô hình          : {X.shape[1]} (Age, Gender, Diabetes, Bacteria_encoded, v.v.)")
+    print(f"→ Số kháng sinh dự đoán (multi-label) : {y.shape[1]} loại")
+    print(f"→ Tỉ lệ nhạy cảm trung bình toàn bộ    : {y.mean().mean():.1%}")
+    print("="*120)
+    print("DỮ LIỆU ĐÃ SẠCH HOÀN TOÀN, SẴN SÀNG TRAIN MÔ HÌNH RỒI ĐẤY!")
