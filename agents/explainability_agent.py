@@ -177,6 +177,62 @@ class ExplainabilityAgent:
         
         return np.array(feature_values).reshape(1, -1)
     
+    def get_embedding_vector(
+        self,
+        patient_data: pd.Series,
+        predictions: pd.Series,
+        probabilities: pd.Series,
+    ) -> np.ndarray:
+        """Get embedding vector representation for machine learning models.
+        
+        Returns:
+            numpy array of shape (embedding_dim,) containing the feature embedding
+        """
+        if self.use_embedding and self.embedder is not None:
+            try:
+                # Create feature vector
+                feature_vector = self._create_feature_embedding(patient_data, probabilities)
+                
+                # Get transformer embedding
+                if TORCH_AVAILABLE:
+                    with torch.no_grad():
+                        embedding = self.embedder.transform(feature_vector)
+                        # Return as numpy array
+                        return embedding.cpu().numpy().flatten()
+                else:
+                    # Fallback: return raw feature vector
+                    return feature_vector.flatten()
+            except Exception:
+                # Fallback: return raw feature vector
+                feature_vector = self._create_feature_embedding(patient_data, probabilities)
+                return feature_vector.flatten()
+        else:
+            # Return raw feature vector without transformer
+            feature_vector = self._create_feature_embedding(patient_data, probabilities)
+            return feature_vector.flatten()
+    
+    def explain_vector(
+        self,
+        patient_features: pd.Series,
+        predictions: pd.DataFrame,
+        probabilities: pd.DataFrame,
+    ) -> np.ndarray:
+        """Return vector representation for Agent 5 machine learning models.
+        
+        This method returns a numerical vector (array/tensor) instead of dict,
+        which can be directly fed into Decision Tree, Fuzzy Logic, LLM embedding, etc.
+        
+        Returns:
+            numpy array of shape (embedding_dim,) or (50,) containing embedding vector.
+            - If transformer is available: shape (embedding_dim,) = (128,)
+            - If transformer is not available: shape (50,) = raw feature vector
+        """
+        return self.get_embedding_vector(
+            patient_features,
+            predictions.iloc[0],
+            probabilities.iloc[0]
+        )
+    
     def _generate_decision_from_embedding(
         self, 
         patient_data: pd.Series, 
@@ -458,6 +514,26 @@ class ExplainabilityEvaluationAgent:
 
     def __init__(self, explainability_agent: Optional[ExplainabilityAgent] = None, use_embedding: bool = True):
         self.explainability_agent = explainability_agent or ExplainabilityAgent(use_embedding=use_embedding)
+    
+    def explain_vector(
+        self,
+        patient_features: pd.Series,
+        predictions: pd.DataFrame,
+        probabilities: pd.DataFrame,
+    ) -> np.ndarray:
+        """Return vector representation for Agent 5 machine learning models.
+        
+        This method returns a numerical vector (array/tensor) instead of dict,
+        which can be directly fed into Decision Tree, Fuzzy Logic, LLM embedding, etc.
+        
+        Returns:
+            numpy array containing embedding vector
+        """
+        return self.explainability_agent.explain_vector(
+            patient_features,
+            predictions,
+            probabilities
+        )
 
     def explain(
         self,

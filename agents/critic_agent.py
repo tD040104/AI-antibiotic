@@ -155,6 +155,61 @@ class CriticAgent:
         
         return np.array(feature_values).reshape(1, -1)
     
+    def get_embedding_vector(
+        self,
+        probabilities: pd.Series,
+        patient_features: Optional[pd.Series] = None,
+    ) -> np.ndarray:
+        """Get embedding vector representation for machine learning models.
+        
+        Returns:
+            numpy array of shape (embedding_dim,) containing the critic embedding
+        """
+        if self.use_embedding and self.embedder is not None:
+            try:
+                # Create feature vector
+                feature_vector = self._create_critic_embedding(probabilities, patient_features)
+                
+                # Get transformer embedding
+                if TORCH_AVAILABLE:
+                    with torch.no_grad():
+                        embedding = self.embedder.transform(feature_vector)
+                        # Return as numpy array
+                        return embedding.cpu().numpy().flatten()
+                else:
+                    # Fallback: return raw feature vector
+                    return feature_vector.flatten()
+            except Exception:
+                # Fallback: return raw feature vector
+                feature_vector = self._create_critic_embedding(probabilities, patient_features)
+                return feature_vector.flatten()
+        else:
+            # Return raw feature vector without transformer
+            feature_vector = self._create_critic_embedding(probabilities, patient_features)
+            return feature_vector.flatten()
+    
+    def review_vector(
+        self,
+        probabilities: pd.DataFrame,
+        patient_features: Optional[pd.Series] = None,
+    ) -> np.ndarray:
+        """Return vector representation for Agent 5 machine learning models.
+        
+        This method returns a numerical vector (array/tensor) instead of dict,
+        which can be directly fed into Decision Tree, Fuzzy Logic, LLM embedding, etc.
+        
+        Returns:
+            numpy array of shape (embedding_dim,) or (30,) containing embedding vector.
+            - If transformer is available: shape (embedding_dim,) = (128,)
+            - If transformer is not available: shape (30,) = raw feature vector
+            - If probabilities is empty: returns zero vector of appropriate size
+        """
+        if probabilities.empty:
+            # Return zero vector if no probabilities
+            return np.zeros(128 if self.use_embedding and self.embedder else 30)
+        
+        return self.get_embedding_vector(probabilities.iloc[0], patient_features)
+    
     def _generate_decision_from_embedding(
         self,
         probabilities: pd.Series,

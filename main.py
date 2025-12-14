@@ -56,11 +56,25 @@ class ClinicalDecisionPipeline:
             predictions,
             probabilities,
         )
+        
+        # Get vector representations from Agent 3 and Agent 4 for Agent 5
+        explain_vector = self.explain_agent.explain_vector(
+            patient_series,
+            predictions,
+            probabilities,
+        )
+        critic_vector = self.critic_agent.review_vector(
+            probabilities,
+            patient_series,
+        )
+        
         decision = self.decision_agent.decide(
             probabilities,
             critic_report,
             patient_series,
             explanation=explanation,
+            explain_vector=explain_vector,
+            critic_vector=critic_vector,
         )
 
         return {

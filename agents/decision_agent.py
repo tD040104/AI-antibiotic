@@ -447,6 +447,7 @@ class DecisionAgent:
     """
     Agent 5: combine critic feedback + treatment ranking to output actions.
     Enhanced with fuzzy logic, decision tree, and LLM.
+    Now accepts vector inputs from Agent 3 and Agent 4 for direct ML model usage.
     """
 
     def __init__(
@@ -465,6 +466,10 @@ class DecisionAgent:
         
         if use_llm:
             self.llm_decision_maker = LLMDecisionMaker(api_key=llm_api_key)
+        
+        # Decision tree trained on combined vectors from Agent 3 and Agent 4
+        self.combined_decision_tree = DecisionTreeRegressor(max_depth=5, random_state=42)
+        self.is_tree_trained = False
 
     def decide(
         self,
@@ -472,32 +477,53 @@ class DecisionAgent:
         critic_report: Dict,
         patient_features: Optional[pd.Series] = None,
         explanation: Optional[Dict] = None,
+        explain_vector: Optional[np.ndarray] = None,
+        critic_vector: Optional[np.ndarray] = None,
         top_k: int = 3,
     ) -> Dict:
-        """Make decision using fuzzy logic, decision tree, and optionally LLM."""
+        """Make decision using fuzzy logic, decision tree, and optionally LLM.
+        
+        Args:
+            probabilities: Prediction probabilities
+            critic_report: Critic agent report (dict format, for backward compatibility)
+            patient_features: Patient feature data
+            explanation: Explanation dict (for backward compatibility)
+            explain_vector: Vector from Agent 3 (ExplainabilityAgent) - preferred input
+            critic_vector: Vector from Agent 4 (CriticAgent) - preferred input
+            top_k: Number of top recommendations
+        """
         recommendations = self.treatment_agent.recommend_treatment(
             probabilities,
             patient_features,
             top_k=top_k,
         )
 
+        # Use vector inputs if provided, otherwise fall back to dict
+        if explain_vector is not None and critic_vector is not None:
+            # Use vector inputs directly for ML models
+            final_decision = self._decide_from_vectors(
+                explain_vector,
+                critic_vector,
+                probabilities,
+                patient_features,
+                recommendations
+            )
+        else:
+            # Fallback to dict-based decision (backward compatibility)
+            explain_decision = explanation.get("decision", {}) if explanation else {}
+            critic_decision = critic_report.get("decision", {})
+            final_decision = self._combine_decisions(
+                explain_decision,
+                critic_decision,
+                recommendations,
+                probabilities,
+                patient_features
+            )
+
         # Use fuzzy logic for action determination instead of if-else
         actions = self._generate_fuzzy_actions(
             critic_report, 
             recommendations, 
-            probabilities,
-            patient_features
-        )
-        
-        # Get decision from explainability and critic agents
-        explain_decision = explanation.get("decision", {}) if explanation else {}
-        critic_decision = critic_report.get("decision", {})
-        
-        # Combine decisions using fuzzy logic
-        final_decision = self._combine_decisions(
-            explain_decision,
-            critic_decision,
-            recommendations,
             probabilities,
             patient_features
         )
@@ -507,6 +533,114 @@ class DecisionAgent:
             "therapy_recommendations": recommendations,
             "decision": final_decision,  # Main decision output
         }
+    
+    def _decide_from_vectors(
+        self,
+        explain_vector: np.ndarray,
+        critic_vector: np.ndarray,
+        probabilities: pd.DataFrame,
+        patient_features: Optional[pd.Series],
+        recommendations: List[Dict]
+    ) -> Dict:
+        """Make decision directly from Agent 3 and Agent 4 vectors using ML models."""
+        # Combine vectors from Agent 3 and Agent 4
+        combined_vector = np.concatenate([explain_vector, critic_vector])
+        
+        # Use Decision Tree if trained
+        if self.is_tree_trained:
+            try:
+                decision_score = self.combined_decision_tree.predict(
+                    combined_vector.reshape(1, -1)
+                )[0]
+                decision_score = float(np.clip(decision_score, 0.0, 1.0))
+                
+                if decision_score >= 0.7:
+                    decision_type = "treat"
+                    confidence = "high"
+                elif decision_score >= 0.4:
+                    decision_type = "review"
+                    confidence = "medium"
+                else:
+                    decision_type = "test"
+                    confidence = "low"
+                
+                return {
+                    "decision_type": decision_type,
+                    "decision_score": decision_score,
+                    "confidence": confidence,
+                    "method": "decision_tree_on_vectors",
+                    "reasoning": "Decision tree trained on Agent 3 and Agent 4 vectors",
+                    "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None
+                }
+            except Exception:
+                pass  # Fall through to fuzzy logic
+        
+        # Use Fuzzy Logic with vector inputs
+        if self.treatment_agent.fuzzy_system and self.treatment_agent.fuzzy_system.available:
+            # Extract key features from combined vector
+            mean_prob = probabilities.iloc[0].mean() if not probabilities.empty else 0.5
+            # Use first few elements of explain_vector as uncertainty proxy
+            uncertainty = float(np.mean(critic_vector[:5])) if len(critic_vector) >= 5 else 0.5
+            risk_factors = patient_features.get("Total_risk_factors", 0) if patient_features is not None else 0
+            
+            fuzzy_result = self.treatment_agent.fuzzy_system.compute_decision(
+                probability=mean_prob,
+                uncertainty=uncertainty,
+                risk_factors=float(risk_factors)
+            )
+            
+            return {
+                "decision_type": fuzzy_result.get("decision_type", "review"),
+                "decision_score": fuzzy_result.get("decision_score", 0.5),
+                "confidence": fuzzy_result.get("confidence", "medium"),
+                "method": "fuzzy_logic_on_vectors",
+                "reasoning": "Fuzzy logic applied to Agent 3 and Agent 4 vectors",
+                "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None
+            }
+        
+        # Fallback: simple weighted combination of vector means
+        explain_mean = float(np.mean(explain_vector))
+        critic_mean = float(np.mean(critic_vector))
+        combined_score = (explain_mean * 0.6 + (1 - critic_mean) * 0.4)
+        
+        if combined_score >= 0.7:
+            decision_type = "treat"
+            confidence = "high"
+        elif combined_score >= 0.4:
+            decision_type = "review"
+            confidence = "medium"
+        else:
+            decision_type = "test"
+            confidence = "low"
+        
+        return {
+            "decision_type": decision_type,
+            "decision_score": float(combined_score),
+            "confidence": confidence,
+            "method": "vector_weighted_average",
+            "reasoning": "Weighted average of Agent 3 and Agent 4 vector means",
+            "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None
+        }
+    
+    def train_decision_tree(
+        self,
+        explain_vectors: np.ndarray,
+        critic_vectors: np.ndarray,
+        decision_scores: np.ndarray
+    ):
+        """Train decision tree on combined vectors from Agent 3 and Agent 4.
+        
+        Args:
+            explain_vectors: Array of shape (n_samples, explain_dim) from Agent 3
+            critic_vectors: Array of shape (n_samples, critic_dim) from Agent 4
+            decision_scores: Array of shape (n_samples,) with target decision scores
+        """
+        # Combine vectors
+        combined_vectors = np.concatenate([explain_vectors, critic_vectors], axis=1)
+        
+        # Train decision tree
+        self.combined_decision_tree.fit(combined_vectors, decision_scores)
+        self.is_tree_trained = True
     
     def _generate_fuzzy_actions(
         self,
