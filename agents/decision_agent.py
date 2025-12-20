@@ -22,6 +22,13 @@ except ImportError:
     ctrl = None  # type: ignore
 
 try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    genai = None  # type: ignore
+
+try:
     import openai
     OPENAI_AVAILABLE = True
 except ImportError:
@@ -156,15 +163,15 @@ class DecisionTreeRecommender:
 
 
 class LLMDecisionMaker:
-    """LLM-based decision maker."""
+    """LLM-based decision maker using Gemini API."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo"):
-        self.api_key = api_key
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-pro"):
+        self.api_key = api_key or "AIzaSyAn23-KlITAbqHz6eRhfFkIM15bp2WZE7U"
         self.model = model
-        self.available = OPENAI_AVAILABLE and api_key is not None
+        self.available = GEMINI_AVAILABLE and self.api_key is not None
         
         if self.available:
-            openai.api_key = api_key
+            genai.configure(api_key=self.api_key)
     
     def generate_decision(
         self,
@@ -184,21 +191,24 @@ class LLMDecisionMaker:
         try:
             prompt = self._create_prompt(patient_data, probabilities, critic_report, explanation)
             
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a medical AI assistant helping with antibiotic resistance decisions."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=200,
-                temperature=0.3
+            # Create full prompt with system message
+            full_prompt = f"You are a medical AI assistant helping with antibiotic resistance decisions.\n\n{prompt}"
+            
+            # Use Gemini API
+            model = genai.GenerativeModel(self.model)
+            response = model.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=200,
+                    temperature=0.3
+                )
             )
             
-            decision_text = response.choices[0].message.content
+            decision_text = response.text
             
             # Parse decision from LLM response
             decision = self._parse_llm_response(decision_text)
-            decision["method"] = "llm"
+            decision["method"] = "llm_gemini"
             decision["llm_response"] = decision_text[:200]  # Truncate for storage
             
             return decision
