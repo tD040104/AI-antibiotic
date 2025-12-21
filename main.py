@@ -9,6 +9,35 @@ import joblib
 import pandas as pd
 from typing import Dict, Optional, Union
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not installed, try manual loading
+    try:
+        if os.path.exists('.env'):
+            with open('.env', 'r', encoding='utf-8-sig') as f:  # utf-8-sig removes BOM
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        os.environ[key.strip()] = value.strip()
+    except Exception:
+        pass
+except Exception:
+    # If load_dotenv fails, try manual loading
+    try:
+        if os.path.exists('.env'):
+            with open('.env', 'r', encoding='utf-8-sig') as f:  # utf-8-sig removes BOM
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        os.environ[key.strip()] = value.strip()
+    except Exception:
+        pass
+
 from agents.patient_data_agent import PatientDataAgent, RecordType
 from agents.prediction_agent import ModelSelectionAgent
 from agents.explainability_agent import ExplainabilityEvaluationAgent

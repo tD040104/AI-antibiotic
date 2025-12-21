@@ -9,6 +9,8 @@ torch>=2.0.0
 sentence-transformers>=2.2.0
 scikit-fuzzy>=0.4.2
 openai>=1.0.0
+python-dotenv>=1.0.0
+google-generativeai>=0.3.0
 
 
 

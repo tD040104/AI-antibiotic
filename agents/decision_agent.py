@@ -22,18 +22,18 @@ except ImportError:
     ctrl = None  # type: ignore
 
 try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    genai = None  # type: ignore
-
-try:
     import openai
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
     openai = None  # type: ignore
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    genai = None  # type: ignore
 
 
 class FuzzyDecisionSystem:
@@ -165,13 +165,86 @@ class DecisionTreeRecommender:
 class LLMDecisionMaker:
     """LLM-based decision maker using Gemini API."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-pro"):
-        self.api_key = api_key or "AIzaSyAn23-KlITAbqHz6eRhfFkIM15bp2WZE7U"
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-1.5-flash"):
+        self.api_key = api_key
         self.model = model
+        # Sử dụng Gemini thay vì OpenAI
         self.available = GEMINI_AVAILABLE and self.api_key is not None
         
         if self.available:
             genai.configure(api_key=self.api_key)
+            # Tự động tìm model hợp lệ nếu model mặc định không tồn tại
+            self.model = self._find_valid_model(model)
+    
+    def _find_valid_model(self, preferred_model: str) -> str:
+        """Tự động tìm model hợp lệ từ danh sách các model phổ biến."""
+        # Danh sách các model để thử (theo thứ tự ưu tiên)
+        models_to_try = [
+            preferred_model,  # Thử model được chỉ định trước
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-pro",
+            "models/gemini-1.5-flash",
+            "models/gemini-1.5-pro",
+            "models/gemini-pro",
+        ]
+        
+        # Thử list models từ API
+        try:
+            available_models = genai.list_models()
+            model_names = []
+            for m in available_models:
+                # Kiểm tra xem model có hỗ trợ generateContent không
+                if hasattr(m, 'supported_generation_methods'):
+                    if 'generateContent' in m.supported_generation_methods:
+                        # Lấy tên model, có thể là full name hoặc short name
+                        model_name = getattr(m, 'name', '')
+                        if model_name:
+                            model_names.append(model_name)
+                elif hasattr(m, 'name'):
+                    # Nếu không có supported_generation_methods, thử dùng luôn
+                    model_names.append(m.name)
+            
+            # Ưu tiên model trong danh sách models_to_try
+            for model_name in models_to_try:
+                # Kiểm tra cả với và không có prefix "models/"
+                for full_name in [model_name, f"models/{model_name}"]:
+                    if full_name in model_names:
+                        print(f"  ✓ Đã tìm thấy model hợp lệ: {full_name}")
+                        return full_name
+                    # Kiểm tra nếu model name kết thúc bằng tên model (loại bỏ prefix)
+                    for available_name in model_names:
+                        # Loại bỏ prefix "models/" nếu có
+                        clean_name = available_name.replace("models/", "")
+                        if clean_name == model_name or available_name.endswith(model_name):
+                            print(f"  ✓ Đã tìm thấy model hợp lệ: {available_name}")
+                            return available_name
+            
+            # Nếu không tìm thấy trong danh sách ưu tiên, lấy model đầu tiên có sẵn
+            if model_names:
+                print(f"  ⚠️  Sử dụng model mặc định từ API: {model_names[0]}")
+                return model_names[0]
+        except Exception as e:
+            # Không in lỗi ở đây để tránh spam, chỉ log khi cần
+            pass
+        
+        # Fallback: thử từng model trong danh sách bằng cách test thực tế
+        for model_name in models_to_try:
+            try:
+                test_model = genai.GenerativeModel(model_name)
+                # Thử generate một test ngắn để xác nhận model hoạt động
+                test_response = test_model.generate_content(
+                    "test", 
+                    generation_config=genai.types.GenerationConfig(max_output_tokens=1)
+                )
+                print(f"  ✓ Đã tìm thấy model hợp lệ qua test: {model_name}")
+                return model_name
+            except Exception:
+                continue
+        
+        # Nếu không tìm thấy model nào, trả về model mặc định và để lỗi xảy ra khi sử dụng
+        print(f"  ⚠️  Không tìm thấy model hợp lệ, sẽ sử dụng: {preferred_model} (có thể gây lỗi khi sử dụng)")
+        return preferred_model
     
     def generate_decision(
         self,
@@ -204,20 +277,75 @@ class LLMDecisionMaker:
                 )
             )
             
-            decision_text = response.text
+            # Handle response properly - check multiple ways to extract text
+            if hasattr(response, 'text') and response.text:
+                decision_text = response.text
+            elif hasattr(response, 'candidates') and response.candidates:
+                # Try to extract text from candidates
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    decision_text = ''.join([part.text for part in candidate.content.parts if hasattr(part, 'text')])
+                else:
+                    decision_text = str(response)
+            else:
+                decision_text = str(response)
             
             # Parse decision from LLM response
             decision = self._parse_llm_response(decision_text)
             decision["method"] = "llm_gemini"
-            decision["llm_response"] = decision_text[:200]  # Truncate for storage
+            decision["llm_response"] = decision_text[:200] if len(decision_text) > 200 else decision_text  # Truncate for storage
             
             return decision
         except Exception as e:
+            # Log error for debugging
+            error_msg = str(e)
+            # Check if it's a model not found error - thử tự động tìm model hợp lệ
+            if "404" in error_msg or "not found" in error_msg.lower():
+                # Thử tự động tìm model hợp lệ một lần nữa
+                old_model = self.model
+                self.model = self._find_valid_model(self.model)
+                
+                # Nếu tìm thấy model mới, thử lại
+                if self.model != old_model:
+                    try:
+                        prompt = self._create_prompt(patient_data, probabilities, critic_report, explanation)
+                        full_prompt = f"You are a medical AI assistant helping with antibiotic resistance decisions.\n\n{prompt}"
+                        model = genai.GenerativeModel(self.model)
+                        response = model.generate_content(
+                            full_prompt,
+                            generation_config=genai.types.GenerationConfig(
+                                max_output_tokens=200,
+                                temperature=0.3
+                            )
+                        )
+                        
+                        # Handle response properly
+                        if hasattr(response, 'text') and response.text:
+                            decision_text = response.text
+                        elif hasattr(response, 'candidates') and response.candidates:
+                            candidate = response.candidates[0]
+                            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                                decision_text = ''.join([part.text for part in candidate.content.parts if hasattr(part, 'text')])
+                            else:
+                                decision_text = str(response)
+                        else:
+                            decision_text = str(response)
+                        
+                        decision = self._parse_llm_response(decision_text)
+                        decision["method"] = "llm_gemini"
+                        decision["llm_response"] = decision_text[:200] if len(decision_text) > 200 else decision_text
+                        return decision
+                    except Exception as retry_error:
+                        error_msg = f"Model '{old_model}' not found, đã thử model '{self.model}' nhưng vẫn lỗi: {str(retry_error)}"
+                else:
+                    error_msg = f"Model '{self.model}' not found. Không tìm thấy model hợp lệ. Original error: {error_msg}"
+            # Don't print here to avoid spam, but include in return
             return {
                 "decision_type": "llm_error",
                 "decision_score": 0.5,
                 "confidence": "medium",
-                "error": str(e)
+                "error": error_msg,
+                "method": "llm_gemini_error"
             }
     
     def _create_prompt(
@@ -466,15 +594,17 @@ class DecisionAgent:
         use_fuzzy: bool = True,
         use_decision_tree: bool = True,
         use_llm: bool = False,
-        llm_api_key: Optional[str] = None
+        llm_api_key: Optional[str] = None,
+        decision_mode: str = "llm_only"  # "vector_only", "llm_only", "auto" (use both, prefer LLM if available)
     ):
         self.treatment_agent = treatment_agent or TreatmentRecommenderAgent(
             use_fuzzy=use_fuzzy,
             use_decision_tree=use_decision_tree
         )
         self.llm_decision_maker = None
+        self.decision_mode = decision_mode  # "vector_only", "llm_only", "auto"
         
-        if use_llm:
+        if use_llm and decision_mode != "vector_only":
             self.llm_decision_maker = LLMDecisionMaker(api_key=llm_api_key)
         
         # Decision tree trained on combined vectors from Agent 3 and Agent 4
@@ -508,18 +638,9 @@ class DecisionAgent:
             top_k=top_k,
         )
 
-        # Use vector inputs if provided, otherwise fall back to dict
-        if explain_vector is not None and critic_vector is not None:
-            # Use vector inputs directly for ML models
-            final_decision = self._decide_from_vectors(
-                explain_vector,
-                critic_vector,
-                probabilities,
-                patient_features,
-                recommendations
-            )
-        else:
-            # Fallback to dict-based decision (backward compatibility)
+        # Chọn luồng xử lý dựa trên decision_mode
+        if self.decision_mode == "llm_only":
+            # Chỉ dùng LLM, không dùng vector
             explain_decision = explanation.get("decision", {}) if explanation else {}
             critic_decision = critic_report.get("decision", {})
             final_decision = self._combine_decisions(
@@ -529,6 +650,48 @@ class DecisionAgent:
                 probabilities,
                 patient_features
             )
+        elif self.decision_mode == "vector_only":
+            # Chỉ dùng Vector (ML), không dùng LLM
+            if explain_vector is not None and critic_vector is not None:
+                final_decision = self._decide_from_vectors(
+                    explain_vector,
+                    critic_vector,
+                    probabilities,
+                    patient_features,
+                    recommendations
+                )
+            else:
+                # Fallback nếu không có vectors
+                explain_decision = explanation.get("decision", {}) if explanation else {}
+                critic_decision = critic_report.get("decision", {})
+                final_decision = self._combine_decisions(
+                    explain_decision,
+                    critic_decision,
+                    recommendations,
+                    probabilities,
+                    patient_features
+                )
+        else:  # "auto" mode - ưu tiên LLM nếu có, fallback về vector
+            if explain_vector is not None and critic_vector is not None:
+                # Use vector inputs directly for ML models
+                final_decision = self._decide_from_vectors(
+                    explain_vector,
+                    critic_vector,
+                    probabilities,
+                    patient_features,
+                    recommendations
+                )
+            else:
+                # Fallback to dict-based decision (backward compatibility)
+                explain_decision = explanation.get("decision", {}) if explanation else {}
+                critic_decision = critic_report.get("decision", {})
+                final_decision = self._combine_decisions(
+                    explain_decision,
+                    critic_decision,
+                    recommendations,
+                    probabilities,
+                    patient_features
+                )
 
         # Use fuzzy logic for action determination instead of if-else
         actions = self._generate_fuzzy_actions(
@@ -553,6 +716,53 @@ class DecisionAgent:
         recommendations: List[Dict]
     ) -> Dict:
         """Make decision directly from Agent 3 and Agent 4 vectors using ML models."""
+        # If LLM is available and enabled, use it first (even with vectors)
+        # Nhưng chỉ khi decision_mode không phải "vector_only"
+        if (self.decision_mode != "vector_only" and 
+            self.llm_decision_maker and 
+            self.llm_decision_maker.available):
+            try:
+                patient_dict = patient_features.to_dict() if patient_features is not None else {}
+                prob_dict = probabilities.iloc[0].to_dict() if not probabilities.empty else {}
+                critic_decision = {"uncertainty_score": float(np.mean(critic_vector[:5])) if len(critic_vector) >= 5 else 0.5}
+                explain_decision = {"decision_score": float(np.mean(explain_vector)) if len(explain_vector) > 0 else 0.5}
+                
+                llm_decision = self.llm_decision_maker.generate_decision(
+                    patient_data=patient_dict,
+                    probabilities=prob_dict,
+                    critic_report={"decision": critic_decision},
+                    explanation={"decision": explain_decision}
+                )
+                
+                # Kiểm tra xem LLM có trả về lỗi không
+                decision_type = llm_decision.get("decision_type", "")
+                error_msg = llm_decision.get("error", "")
+                
+                # Nếu LLM trả về lỗi do API key (403), disable LLM và fallback
+                if decision_type == "llm_error" and ("403" in error_msg or "leaked" in error_msg.lower() or "API key" in error_msg):
+                    print(f"  ⚠️  LLM API key không hợp lệ hoặc bị leak. Đang fallback về Vector (ML) model.")
+                    self.llm_decision_maker.available = False
+                    # Fall through to ML models
+                elif decision_type not in ["llm_unavailable", "llm_error"]:
+                    return {
+                        "decision_type": decision_type,
+                        "decision_score": llm_decision.get("decision_score", 0.5),
+                        "confidence": llm_decision.get("confidence", "medium"),
+                        "method": llm_decision.get("method", "llm_gemini_on_vectors"),
+                        "reasoning": "Gemini LLM decision using vector-enhanced context",
+                        "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None
+                    }
+                # Nếu LLM trả về lỗi khác, fall through to ML models
+            except Exception as e:
+                error_str = str(e)
+                # Nếu là lỗi API key, disable LLM
+                if "403" in error_str or "leaked" in error_str.lower() or "API key" in error_str:
+                    print(f"  ⚠️  LLM API key không hợp lệ. Đang fallback về Vector (ML) model.")
+                    if self.llm_decision_maker:
+                        self.llm_decision_maker.available = False
+                # Fall through to ML models if LLM fails
+                pass
+        
         # Combine vectors from Agent 3 and Agent 4
         combined_vector = np.concatenate([explain_vector, critic_vector])
         
@@ -585,8 +795,10 @@ class DecisionAgent:
             except Exception:
                 pass  # Fall through to fuzzy logic
         
-        # Use Fuzzy Logic with vector inputs
-        if self.treatment_agent.fuzzy_system and self.treatment_agent.fuzzy_system.available:
+        # Use Fuzzy Logic with vector inputs (chỉ khi không phải llm_only mode)
+        if (self.decision_mode != "llm_only" and 
+            self.treatment_agent.fuzzy_system and 
+            self.treatment_agent.fuzzy_system.available):
             # Extract key features from combined vector
             mean_prob = probabilities.iloc[0].mean() if not probabilities.empty else 0.5
             # Use first few elements of explain_vector as uncertainty proxy
@@ -726,29 +938,51 @@ class DecisionAgent:
         patient_features: Optional[pd.Series]
     ) -> Dict:
         """Combine decisions from multiple sources using fuzzy logic or LLM."""
-        # Use LLM if available
-        if self.llm_decision_maker and self.llm_decision_maker.available:
-            patient_dict = patient_features.to_dict() if patient_features is not None else {}
-            prob_dict = probabilities.iloc[0].to_dict() if not probabilities.empty else {}
-            
-            llm_decision = self.llm_decision_maker.generate_decision(
-                patient_data=patient_dict,
-                probabilities=prob_dict,
-                critic_report={"decision": critic_decision},
-                explanation={"decision": explain_decision}
-            )
-            
-            return {
-                "decision_type": llm_decision.get("decision_type", "review"),
-                "decision_score": llm_decision.get("decision_score", 0.5),
-                "confidence": llm_decision.get("confidence", "medium"),
-                "method": "llm",
-                "reasoning": llm_decision.get("reasoning", "LLM-based decision"),
-                "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None
-            }
+        # Use LLM if available (chỉ khi không phải vector_only mode)
+        if (self.decision_mode != "vector_only" and 
+            self.llm_decision_maker and 
+            self.llm_decision_maker.available):
+            try:
+                patient_dict = patient_features.to_dict() if patient_features is not None else {}
+                prob_dict = probabilities.iloc[0].to_dict() if not probabilities.empty else {}
+                
+                llm_decision = self.llm_decision_maker.generate_decision(
+                    patient_data=patient_dict,
+                    probabilities=prob_dict,
+                    critic_report={"decision": critic_decision},
+                    explanation={"decision": explain_decision}
+                )
+                
+                decision_type = llm_decision.get("decision_type", "")
+                error_msg = llm_decision.get("error", "")
+                
+                # Nếu LLM trả về lỗi do API key (403), disable LLM và fallback
+                if decision_type == "llm_error" and ("403" in error_msg or "leaked" in error_msg.lower() or "API key" in error_msg):
+                    if self.llm_decision_maker:
+                        self.llm_decision_maker.available = False
+                    # Fall through to fuzzy logic
+                elif decision_type not in ["llm_unavailable", "llm_error"]:
+                    return {
+                        "decision_type": decision_type,
+                        "decision_score": llm_decision.get("decision_score", 0.5),
+                        "confidence": llm_decision.get("confidence", "medium"),
+                        "method": "llm",
+                        "reasoning": llm_decision.get("reasoning", "LLM-based decision"),
+                        "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None
+                    }
+            except Exception as e:
+                error_str = str(e)
+                # Nếu là lỗi API key, disable LLM
+                if "403" in error_str or "leaked" in error_str.lower() or "API key" in error_str:
+                    if self.llm_decision_maker:
+                        self.llm_decision_maker.available = False
+                # Fall through to fuzzy logic
+                pass
         
-        # Use fuzzy logic to combine decisions
-        if self.treatment_agent.fuzzy_system and self.treatment_agent.fuzzy_system.available:
+        # Use fuzzy logic to combine decisions (chỉ khi không phải llm_only mode)
+        if (self.decision_mode != "llm_only" and 
+            self.treatment_agent.fuzzy_system and 
+            self.treatment_agent.fuzzy_system.available):
             explain_score = explain_decision.get("decision_score", 0.5)
             critic_uncertainty = critic_decision.get("uncertainty_score", 0.5)
             mean_prob = probabilities.iloc[0].mean() if not probabilities.empty else 0.5
