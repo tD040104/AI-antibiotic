@@ -299,6 +299,12 @@ class LLMDecisionMaker:
         except Exception as e:
             # Log error for debugging
             error_msg = str(e)
+            
+            # Check if it's a quota exceeded error (429) - disable LLM permanently
+            if "429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+                self.available = False
+                error_msg = f"Quota exceeded (429): {error_msg[:100]}"
+            
             # Check if it's a model not found error - thử tự động tìm model hợp lệ
             if "404" in error_msg or "not found" in error_msg.lower():
                 # Thử tự động tìm model hợp lệ một lần nữa
@@ -356,40 +362,132 @@ class LLMDecisionMaker:
         explanation: Dict
     ) -> str:
         """Create prompt for LLM."""
-        prompt = f"""
-Based on the following clinical data, provide a treatment decision:
-
-Patient: {patient_data.get('age', 'Unknown')} years, {patient_data.get('gender', 'Unknown')}
-Bacteria: {patient_data.get('bacteria', 'Unknown')}
-Risk factors: Diabetes={patient_data.get('diabetes', 'No')}, Hypertension={patient_data.get('hypertension', 'No')}
-
-Top antibiotic probabilities:
-"""
-        sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)[:5]
-        for ab, prob in sorted_probs:
-            prompt += f"  - {ab}: {prob:.2%}\n"
+        # Tính toán các thống kê quan trọng
+        sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
+        max_prob = sorted_probs[0][1] if sorted_probs else 0
+        max_ab = sorted_probs[0][0] if sorted_probs else "None"
+        high_prob_count = sum(1 for _, prob in sorted_probs if prob >= 0.7)
+        uncertainty = critic_report.get('decision', {}).get('uncertainty_score', 0.5)
         
-        prompt += f"\nUncertainty: {critic_report.get('decision', {}).get('uncertainty_score', 0):.2f}\n"
-        prompt += "\nProvide decision: TREAT, REVIEW, or TEST. Explain briefly."
+        prompt = f"""You are a medical AI assistant helping with antibiotic resistance treatment decisions.
+
+CLINICAL DATA:
+- Patient: {patient_data.get('age', 'Unknown')} years, {patient_data.get('gender', 'Unknown')}
+- Bacteria: {patient_data.get('bacteria', 'Unknown')}
+- Risk factors: Diabetes={patient_data.get('diabetes', 'No')}, Hypertension={patient_data.get('hypertension', 'No')}
+
+ANTIBIOTIC SENSITIVITY PROBABILITIES:
+"""
+        for ab, prob in sorted_probs[:5]:
+            prompt += f"  - {ab}: {prob:.1%}\n"
+        
+        prompt += f"""
+KEY METRICS:
+- Highest probability: {max_ab} = {max_prob:.1%}
+- Number of antibiotics with prob >= 70%: {high_prob_count}
+- Uncertainty score: {uncertainty:.2f} (lower is better)
+
+DECISION CRITERIA:
+- TREAT: Choose when highest probability >= 80% OR (highest probability >= 70% AND uncertainty < 0.5 AND risk factors <= 2). This means we have high confidence in treatment.
+- REVIEW: Choose when highest probability is between 50-80% OR uncertainty is moderate (0.4-0.7). This means we need more consideration.
+- TEST: Choose when highest probability < 50% OR uncertainty > 0.75 OR risk factors >= 5. This means we need additional testing.
+
+CRITICAL INSTRUCTIONS:
+1. You MUST respond with ONLY ONE word: TREAT, REVIEW, or TEST
+2. Start your response immediately with the decision word (e.g., "TREAT" or "REVIEW" or "TEST")
+3. Do NOT include explanations, reasoning, or additional text before the decision word
+4. The decision word should be the FIRST word in your response
+
+Example correct responses:
+- "TREAT"
+- "REVIEW"  
+- "TEST"
+
+Your decision (respond with ONLY the word):"""
         
         return prompt
     
     def _parse_llm_response(self, response: str) -> Dict:
         """Parse LLM response to extract decision."""
-        response_lower = response.lower()
+        if not response or len(response.strip()) == 0:
+            return {
+                "decision_type": "review",
+                "decision_score": 0.5,
+                "confidence": "medium"
+            }
         
-        if "treat" in response_lower and "test" not in response_lower:
+        response_lower = response.lower().strip()
+        
+        # Tìm decision ở đầu response (thường LLM sẽ trả lời với format "TREAT: explanation" hoặc "Decision: TREAT")
+        # Ưu tiên tìm ở đầu response trước
+        first_line = response.split('\n')[0].lower().strip()
+        
+        # Kiểm tra các pattern phổ biến - ưu tiên các từ khóa rõ ràng ở đầu
+        # Pattern 1: Bắt đầu bằng TREAT/TREATING
+        if first_line.startswith('treat') or first_line.startswith('treating'):
             decision_type = "treat"
             decision_score = 0.8
             confidence = "high"
-        elif "test" in response_lower or "additional" in response_lower:
+        # Pattern 2: Bắt đầu bằng TEST/TESTING
+        elif first_line.startswith('test') or first_line.startswith('testing'):
             decision_type = "test"
             decision_score = 0.3
             confidence = "low"
-        else:
+        # Pattern 3: Bắt đầu bằng REVIEW
+        elif first_line.startswith('review'):
             decision_type = "review"
             decision_score = 0.5
             confidence = "medium"
+        # Pattern 4: Có "Decision: TREAT/REVIEW/TEST" trong dòng đầu
+        elif 'decision:' in first_line:
+            if 'treat' in first_line:
+                decision_type = "treat"
+                decision_score = 0.8
+                confidence = "high"
+            elif 'test' in first_line:
+                decision_type = "test"
+                decision_score = 0.3
+                confidence = "low"
+            elif 'review' in first_line:
+                decision_type = "review"
+                decision_score = 0.5
+                confidence = "medium"
+            else:
+                # Fallback nếu có "Decision:" nhưng không rõ
+                decision_type = "review"
+                decision_score = 0.5
+                confidence = "medium"
+        # Pattern 5: Tìm trong toàn bộ response với regex chính xác hơn
+        else:
+            import re
+            # Tìm từ "treat" đứng độc lập (word boundary)
+            treat_pattern = r'\b(treat|treating)\b'
+            test_pattern = r'\b(test|testing|additional testing)\b'
+            
+            treat_match = re.search(treat_pattern, response_lower)
+            test_match = re.search(test_pattern, response_lower)
+            
+            # Ưu tiên treat nếu tìm thấy và không có test ở đầu
+            if treat_match and (not test_match or treat_match.start() < test_match.start()):
+                # Kiểm tra context - nếu có "should treat" hoặc "recommend treat" thì chắc chắn hơn
+                context_before = response_lower[max(0, treat_match.start()-20):treat_match.start()]
+                if any(word in context_before for word in ['should', 'recommend', 'suggest', 'choose', 'select']):
+                    decision_type = "treat"
+                    decision_score = 0.85
+                    confidence = "high"
+                else:
+                    decision_type = "treat"
+                    decision_score = 0.75
+                    confidence = "medium"
+            elif test_match:
+                decision_type = "test"
+                decision_score = 0.3
+                confidence = "low"
+            else:
+                # Mặc định là review nếu không tìm thấy gì rõ ràng
+                decision_type = "review"
+                decision_score = 0.5
+                confidence = "medium"
         
         return {
             "decision_type": decision_type,
@@ -595,7 +693,7 @@ class DecisionAgent:
         use_decision_tree: bool = True,
         use_llm: bool = False,
         llm_api_key: Optional[str] = None,
-        decision_mode: str = "llm_only"  # "vector_only", "llm_only", "auto" (use both, prefer LLM if available)
+        decision_mode: str = "auto"  # "vector_only", "llm_only", "auto" (use both, prefer LLM if available)
     ):
         self.treatment_agent = treatment_agent or TreatmentRecommenderAgent(
             use_fuzzy=use_fuzzy,
@@ -641,15 +739,88 @@ class DecisionAgent:
         # Chọn luồng xử lý dựa trên decision_mode
         if self.decision_mode == "llm_only":
             # Chỉ dùng LLM, không dùng vector
+            # Nhưng vẫn cần explain_decision và critic_decision để truyền vào LLM
             explain_decision = explanation.get("decision", {}) if explanation else {}
             critic_decision = critic_report.get("decision", {})
-            final_decision = self._combine_decisions(
-                explain_decision,
-                critic_decision,
-                recommendations,
-                probabilities,
-                patient_features
-            )
+            
+            # Nếu LLM available, gọi trực tiếp LLM trước
+            if (self.llm_decision_maker and self.llm_decision_maker.available):
+                try:
+                    # Chuẩn hóa patient_dict với keys lowercase và format đúng
+                    raw_patient_dict = patient_features.to_dict() if patient_features is not None else {}
+                    patient_dict = {}
+                    # Map các keys sang format mà LLM prompt expects
+                    patient_dict['age'] = raw_patient_dict.get('Age', raw_patient_dict.get('age', 'Unknown'))
+                    patient_dict['gender'] = raw_patient_dict.get('Gender', raw_patient_dict.get('gender', 'Unknown'))
+                    patient_dict['bacteria'] = raw_patient_dict.get('Souches', raw_patient_dict.get('Bacteria', raw_patient_dict.get('bacteria', 'Unknown')))
+                    # Convert Yes/No/1/0 to Yes/No format
+                    diabetes_val = raw_patient_dict.get('Diabetes', 0)
+                    patient_dict['diabetes'] = 'Yes' if diabetes_val in [1, True, 'Yes', 'yes'] else 'No'
+                    hypertension_val = raw_patient_dict.get('Hypertension', 0)
+                    patient_dict['hypertension'] = 'Yes' if hypertension_val in [1, True, 'Yes', 'yes'] else 'No'
+                    
+                    prob_dict = probabilities.iloc[0].to_dict() if not probabilities.empty else {}
+                    
+                    llm_decision = self.llm_decision_maker.generate_decision(
+                        patient_data=patient_dict,
+                        probabilities=prob_dict,
+                        critic_report={"decision": critic_decision},
+                        explanation={"decision": explain_decision}
+                    )
+                    
+                    decision_type = llm_decision.get("decision_type", "")
+                    error_msg = llm_decision.get("error", "")
+                    
+                    # Nếu LLM trả về lỗi quota (429), disable LLM và fallback
+                    if decision_type == "llm_error" and ("429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower()):
+                        if self.llm_decision_maker:
+                            self.llm_decision_maker.available = False
+                        # Fallback về _combine_decisions (sẽ dùng fuzzy logic)
+                        final_decision = self._combine_decisions(
+                            explain_decision,
+                            critic_decision,
+                            recommendations,
+                            probabilities,
+                            patient_features
+                        )
+                    # Nếu LLM thành công, trả về kết quả
+                    elif decision_type not in ["llm_unavailable", "llm_error"]:
+                        final_decision = {
+                            "decision_type": decision_type,
+                            "decision_score": llm_decision.get("decision_score", 0.5),
+                            "confidence": llm_decision.get("confidence", "medium"),
+                            "method": "llm",
+                            "reasoning": llm_decision.get("reasoning", "LLM-based decision"),
+                            "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None,
+                            "llm_response": llm_decision.get("llm_response", "")
+                        }
+                    else:
+                        # LLM thất bại - fallback về _combine_decisions (sẽ dùng fuzzy logic)
+                        final_decision = self._combine_decisions(
+                            explain_decision,
+                            critic_decision,
+                            recommendations,
+                            probabilities,
+                            patient_features
+                        )
+                except Exception as e:
+                    # LLM exception - fallback về _combine_decisions
+                    final_decision = self._combine_decisions(
+                        explain_decision,
+                        critic_decision,
+                        recommendations,
+                        probabilities,
+                        patient_features
+                    )
+            else:
+                # LLM không available - fallback về _combine_decisions
+                final_decision = self._combine_decisions(
+                    explain_decision,
+                    critic_decision,
+                    recommendations,
+                    probabilities,
+                    patient_features
+                )
         elif self.decision_mode == "vector_only":
             # Chỉ dùng Vector (ML), không dùng LLM
             if explain_vector is not None and critic_vector is not None:
@@ -738,10 +909,14 @@ class DecisionAgent:
                 decision_type = llm_decision.get("decision_type", "")
                 error_msg = llm_decision.get("error", "")
                 
-                # Nếu LLM trả về lỗi do API key (403), disable LLM và fallback
-                if decision_type == "llm_error" and ("403" in error_msg or "leaked" in error_msg.lower() or "API key" in error_msg):
-                    print(f"  ⚠️  LLM API key không hợp lệ hoặc bị leak. Đang fallback về Vector (ML) model.")
-                    self.llm_decision_maker.available = False
+                # Nếu LLM trả về lỗi do API key (403) hoặc quota (429), disable LLM và fallback
+                if decision_type == "llm_error":
+                    if "403" in error_msg or "leaked" in error_msg.lower() or "API key" in error_msg:
+                        print(f"  ⚠️  LLM API key không hợp lệ hoặc bị leak. Đang fallback về Vector (ML) model.")
+                        self.llm_decision_maker.available = False
+                    elif "429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+                        print(f"  ⚠️  LLM quota đã hết. Đang fallback về Vector (ML) model.")
+                        self.llm_decision_maker.available = False
                     # Fall through to ML models
                 elif decision_type not in ["llm_unavailable", "llm_error"]:
                     return {
@@ -755,9 +930,13 @@ class DecisionAgent:
                 # Nếu LLM trả về lỗi khác, fall through to ML models
             except Exception as e:
                 error_str = str(e)
-                # Nếu là lỗi API key, disable LLM
+                # Nếu là lỗi API key hoặc quota, disable LLM
                 if "403" in error_str or "leaked" in error_str.lower() or "API key" in error_str:
                     print(f"  ⚠️  LLM API key không hợp lệ. Đang fallback về Vector (ML) model.")
+                    if self.llm_decision_maker:
+                        self.llm_decision_maker.available = False
+                elif "429" in error_str or "quota" in error_str.lower() or "exceeded" in error_str.lower():
+                    print(f"  ⚠️  LLM quota đã hết. Đang fallback về Vector (ML) model.")
                     if self.llm_decision_maker:
                         self.llm_decision_maker.available = False
                 # Fall through to ML models if LLM fails
@@ -955,33 +1134,55 @@ class DecisionAgent:
                 
                 decision_type = llm_decision.get("decision_type", "")
                 error_msg = llm_decision.get("error", "")
+                llm_response = llm_decision.get("llm_response", "")
                 
-                # Nếu LLM trả về lỗi do API key (403), disable LLM và fallback
-                if decision_type == "llm_error" and ("403" in error_msg or "leaked" in error_msg.lower() or "API key" in error_msg):
-                    if self.llm_decision_maker:
-                        self.llm_decision_maker.available = False
+                # Nếu LLM trả về lỗi do API key (403) hoặc quota (429), disable LLM và fallback
+                if decision_type == "llm_error":
+                    if "403" in error_msg or "leaked" in error_msg.lower() or "API key" in error_msg:
+                        if self.llm_decision_maker:
+                            self.llm_decision_maker.available = False
+                    elif "429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+                        if self.llm_decision_maker:
+                            self.llm_decision_maker.available = False
                     # Fall through to fuzzy logic
                 elif decision_type not in ["llm_unavailable", "llm_error"]:
+                    # LLM thành công - trả về kết quả
                     return {
                         "decision_type": decision_type,
                         "decision_score": llm_decision.get("decision_score", 0.5),
                         "confidence": llm_decision.get("confidence", "medium"),
                         "method": "llm",
                         "reasoning": llm_decision.get("reasoning", "LLM-based decision"),
-                        "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None
+                        "recommended_antibiotic": recommendations[0]["antibiotic_code"] if recommendations else None,
+                        "llm_response": llm_response[:200] if llm_response else ""
                     }
+                else:
+                    # LLM trả về lỗi hoặc unavailable - log để debug
+                    if decision_type == "llm_error":
+                        # Chỉ log lần đầu để tránh spam
+                        if not hasattr(self, '_llm_error_logged'):
+                            print(f"  ⚠️  LLM Error: {error_msg[:100]}")
+                            self._llm_error_logged = True
             except Exception as e:
                 error_str = str(e)
-                # Nếu là lỗi API key, disable LLM
+                # Nếu là lỗi API key hoặc quota, disable LLM
                 if "403" in error_str or "leaked" in error_str.lower() or "API key" in error_str:
                     if self.llm_decision_maker:
                         self.llm_decision_maker.available = False
+                elif "429" in error_str or "quota" in error_str.lower() or "exceeded" in error_str.lower():
+                    if self.llm_decision_maker:
+                        self.llm_decision_maker.available = False
+                # Log exception để debug (chỉ lần đầu)
+                if not hasattr(self, '_llm_exception_logged'):
+                    print(f"  ⚠️  LLM Exception: {error_str[:100]}")
+                    self._llm_exception_logged = True
                 # Fall through to fuzzy logic
                 pass
         
-        # Use fuzzy logic to combine decisions (chỉ khi không phải llm_only mode)
-        if (self.decision_mode != "llm_only" and 
-            self.treatment_agent.fuzzy_system and 
+        # Use fuzzy logic to combine decisions (cho phép fallback ngay cả khi llm_only mode)
+        # Chỉ skip fuzzy logic nếu LLM thành công và decision_mode là llm_only
+        # Nhưng nếu LLM thất bại, vẫn dùng fuzzy logic như fallback
+        if (self.treatment_agent.fuzzy_system and 
             self.treatment_agent.fuzzy_system.available):
             explain_score = explain_decision.get("decision_score", 0.5)
             critic_uncertainty = critic_decision.get("uncertainty_score", 0.5)

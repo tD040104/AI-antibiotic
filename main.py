@@ -62,7 +62,16 @@ class ClinicalDecisionPipeline:
         self.prediction_agent = prediction_agent or ModelSelectionAgent()
         self.explain_agent = explain_agent or ExplainabilityEvaluationAgent()
         self.critic_agent = critic_agent or CriticAgent()
-        self.decision_agent = decision_agent or DecisionAgent()
+        # Mặc định dùng LLM (Gemini) nếu có API key, fallback về Vector (ML) nếu không
+        if decision_agent is None:
+            gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            self.decision_agent = DecisionAgent(
+                use_llm=True if gemini_api_key else False,
+                llm_api_key=gemini_api_key,
+                decision_mode="auto"  # Ưu tiên LLM nếu có, fallback về Vector
+            )
+        else:
+            self.decision_agent = decision_agent
 
     def run(
         self,
@@ -140,7 +149,18 @@ class MASClinicalDecisionSystem:
         self.data_agent = PatientDataAgent()
         self.explain_agent = ExplainabilityEvaluationAgent()
         self.critic_agent = CriticAgent()
-        self.decision_agent = DecisionAgent()
+        # Mặc định dùng LLM (Gemini) nếu có API key, fallback về Vector (ML) nếu không
+        gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if gemini_api_key:
+            print("  ✓ Decision Agent: Sử dụng Gemini LLM (mặc định)")
+        else:
+            print("  ⚠️  Decision Agent: Không tìm thấy GEMINI_API_KEY, sử dụng Vector (ML) thay thế")
+            print("     → Để dùng LLM, thêm GEMINI_API_KEY vào file .env hoặc biến môi trường")
+        self.decision_agent = DecisionAgent(
+            use_llm=True if gemini_api_key else False,
+            llm_api_key=gemini_api_key,
+            decision_mode="auto"  # Ưu tiên LLM nếu có, fallback về Vector
+        )
 
         # Pipeline inference dùng chung các agent
         self.pipeline = ClinicalDecisionPipeline(

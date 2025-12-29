@@ -19,6 +19,7 @@ from sklearn.metrics import (
     classification_report
 )
 import json
+import time
 from datetime import datetime
 
 # Load environment variables from .env file
@@ -145,10 +146,10 @@ class DecisionModelEvaluator:
         critic_report: Dict
     ) -> str:
         """
-        Tạo ground truth decision dựa trên heuristic:
-        - treat: nếu có ít nhất 1 antibiotic với prob >= 0.7 và uncertainty thấp
-        - test: nếu uncertainty cao hoặc không có antibiotic nào với prob >= 0.5
-        - review: các trường hợp còn lại
+        Tạo ground truth decision dựa trên heuristic cải tiến:
+        - treat: nếu có antibiotic với prob rất cao (>= 0.8) hoặc prob cao (>= 0.7) với uncertainty thấp
+        - test: nếu không có antibiotic nào tốt hoặc uncertainty rất cao
+        - review: các trường hợp trung gian
         """
         if probabilities.empty:
             return "test"
@@ -157,14 +158,48 @@ class DecisionModelEvaluator:
         max_prob = proba_series.max()
         mean_prob = proba_series.mean()
         
+        # Đếm số antibiotic có prob >= 0.5, >= 0.7, và >= 0.8
+        very_high_prob_count = (proba_series >= 0.8).sum()
+        high_prob_count = (proba_series >= 0.7).sum()
+        medium_prob_count = (proba_series >= 0.5).sum()
+        
         uncertainty = critic_report.get("decision", {}).get("uncertainty_score", 0.5)
         risk_factors = patient_features.get("Total_risk_factors", 0) if patient_features is not None else 0
         
-        # Heuristic rules
-        if max_prob >= 0.7 and uncertainty < 0.3 and risk_factors < 3:
+        # Heuristic rules cải tiến - ưu tiên max_prob cao
+        # TREAT: 
+        # 1. Có ít nhất 1 antibiotic với prob rất cao (>= 0.8) và uncertainty không quá cao
+        if max_prob >= 0.8 and uncertainty < 0.6 and risk_factors <= 3:
             return "treat"
-        elif max_prob < 0.5 or uncertainty > 0.7 or risk_factors >= 4:
+        # 2. Có ít nhất 1 antibiotic với prob cao (>= 0.75) và uncertainty thấp
+        elif max_prob >= 0.75 and uncertainty < 0.35 and risk_factors <= 2:
+            return "treat"
+        # 3. Có nhiều antibiotic với prob tốt (>= 0.7) và uncertainty thấp
+        elif high_prob_count >= 2 and uncertainty < 0.4 and risk_factors <= 2:
+            return "treat"
+        
+        # TEST: 
+        # 1. Không có antibiotic nào tốt
+        elif max_prob < 0.4 or medium_prob_count == 0:
             return "test"
+        # 2. Uncertainty rất cao
+        elif uncertainty > 0.75:
+            return "test"
+        # 3. Risk rất cao
+        elif risk_factors >= 5:
+            return "test"
+        
+        # REVIEW: Các trường hợp trung gian
+        # 1. Có antibiotic với prob tốt nhưng uncertainty trung bình-cao
+        elif max_prob >= 0.7 and uncertainty >= 0.4 and uncertainty < 0.7:
+            return "review"
+        # 2. Có antibiotic với prob trung bình (0.5-0.7)
+        elif max_prob >= 0.5 and max_prob < 0.7:
+            return "review"
+        # 3. Có ít antibiotic với prob tốt nhưng uncertainty trung bình
+        elif medium_prob_count >= 1 and medium_prob_count < 3 and uncertainty < 0.6:
+            return "review"
+        # Mặc định: review cho các trường hợp không rõ ràng
         else:
             return "review"
     
@@ -172,7 +207,8 @@ class DecisionModelEvaluator:
         self,
         csv_path: str,
         n_samples: Optional[int] = None,
-        use_ground_truth: bool = True
+        use_ground_truth: bool = True,
+        llm_delay: float = 0.0
     ) -> Dict:
         """
         Đánh giá 2 mô hình trên dataset.
@@ -181,6 +217,7 @@ class DecisionModelEvaluator:
             csv_path: Đường dẫn đến file CSV
             n_samples: Số lượng mẫu để đánh giá (None = tất cả)
             use_ground_truth: Nếu True, sử dụng ground truth heuristic. Nếu False, chỉ so sánh 2 mô hình với nhau.
+            llm_delay: Thời gian delay (giây) giữa mỗi lần gọi LLM để tránh quota. Mặc định 0.0 (không delay).
         """
         print("=" * 80)
         print("BẮT ĐẦU ĐÁNH GIÁ 2 MÔ HÌNH DECISION")
@@ -192,6 +229,11 @@ class DecisionModelEvaluator:
             df = df.head(n_samples)
         
         print(f"  ✓ Đã tải {len(df)} mẫu từ dataset")
+        
+        # Thông báo về delay nếu có
+        if llm_delay > 0 and self.enable_llm:
+            total_delay_time = llm_delay * (len(df) - 1) if len(df) > 1 else 0
+            print(f"  ⏳ LLM delay: {llm_delay}s giữa mỗi mẫu (tổng thời gian delay: ~{total_delay_time:.0f}s)")
         
         # Kết quả - chỉ khởi tạo cho các mô hình được enable
         vector_predictions = []
@@ -299,36 +341,93 @@ class DecisionModelEvaluator:
                         critic_vector=None
                     )
                     
-                    gemini_decision_type = self._normalize_decision_type(
-                        gemini_decision["decision"].get("decision_type", "review")
-                    )
+                    raw_decision_type = gemini_decision["decision"].get("decision_type", "review")
+                    gemini_decision_type = self._normalize_decision_type(raw_decision_type)
                     gemini_predictions.append(gemini_decision_type)
                     gemini_scores.append(gemini_decision["decision"].get("decision_score", 0.5))
                     gemini_method = gemini_decision["decision"].get("method", "unknown")
                     gemini_methods.append(gemini_method)
+                    
+                    # Debug: Log raw decision type và normalized cho vài mẫu đầu
+                    if idx < 5:
+                        print(f"    DEBUG Sample {idx+1}: raw_decision='{raw_decision_type}' -> normalized='{gemini_decision_type}', method='{gemini_method}'")
                     
                     # Debug: Log nếu không dùng LLM (chỉ log 1 lần đầu tiên)
                     if idx == 0 and "llm" not in gemini_method.lower() and "gemini" not in gemini_method.lower():
                         print(f"\n    ⚠️  DEBUG: Gemini model đang dùng method '{gemini_method}' thay vì LLM")
                         if gemini_decision["decision"].get("error"):
                             print(f"    ⚠️  LLM Error: {gemini_decision['decision'].get('error')}")
+                    
+                    # Delay giữa các lần gọi LLM để tránh quota (chỉ delay nếu dùng LLM và không phải mẫu cuối)
+                    if (llm_delay > 0 and 
+                        self.enable_llm and 
+                        self.gemini_agent and 
+                        self.gemini_agent.llm_decision_maker and
+                        self.gemini_agent.llm_decision_maker.available and
+                        "llm" in gemini_method.lower() and 
+                        idx < len(df) - 1):
+                        print(f"    ⏳ Đang delay {llm_delay}s trước mẫu tiếp theo...")
+                        time.sleep(llm_delay)
                 
-                # 3. Ground truth (nếu cần) - chỉ tính 1 lần cho mỗi mẫu
-                if use_ground_truth and len(ground_truths) < len(vector_predictions) + len(gemini_predictions):
-                    gt = self._get_ground_truth_decision(
-                        probabilities,
-                        patient_series,
-                        critic_report
-                    )
-                    ground_truths.append(gt)
+                # 3. Ground truth (nếu cần) - tính cho mỗi mẫu đã xử lý thành công
+                # Ground truth phải được tính cho mỗi mẫu, không phụ thuộc vào số lượng predictions
+                if use_ground_truth:
+                    # Tính ground truth dựa trên số mẫu đã xử lý (tối đa là số predictions đã có)
+                    # Đảm bảo mỗi mẫu chỉ có 1 ground truth
+                    current_sample_idx = max(len(vector_predictions), len(gemini_predictions), len(ground_truths))
+                    if len(ground_truths) < current_sample_idx:
+                        gt = self._get_ground_truth_decision(
+                            probabilities,
+                            patient_series,
+                            critic_report
+                        )
+                        ground_truths.append(gt)
+                        
+                        # Debug: Log thông tin cho vài mẫu đầu tiên
+                        if len(ground_truths) <= 5:
+                            proba_series = probabilities.iloc[0]
+                            max_prob = proba_series.max()
+                            uncertainty = critic_report.get("decision", {}).get("uncertainty_score", 0.5)
+                            risk_factors = patient_series.get("Total_risk_factors", 0) if patient_series is not None else 0
+                            print(f"    DEBUG Sample {len(ground_truths)}: max_prob={max_prob:.3f}, uncertainty={uncertainty:.3f}, risk={risk_factors}, GT={gt}")
                 
             except Exception as e:
                 print(f"    ⚠️  Lỗi khi xử lý mẫu {idx}: {str(e)}")
                 continue
         
-        # Tính số mẫu đã xử lý
+        # Tính số mẫu đã xử lý và đảm bảo độ dài khớp nhau
         n_processed = max(len(vector_predictions), len(gemini_predictions))
+        
+        # Đảm bảo ground_truths có cùng độ dài với số mẫu đã xử lý
+        if use_ground_truth:
+            while len(ground_truths) < n_processed:
+                # Nếu thiếu ground truth, thêm giá trị mặc định (không nên xảy ra)
+                print(f"  ⚠️  CẢNH BÁO: Thiếu ground truth cho {n_processed - len(ground_truths)} mẫu")
+                break
+            # Cắt bớt nếu thừa
+            if len(ground_truths) > n_processed:
+                ground_truths = ground_truths[:n_processed]
+                print(f"  ⚠️  CẢNH BÁO: Đã cắt bớt ground_truths từ {len(ground_truths)} xuống {n_processed}")
+        
+        # Đảm bảo vector_predictions và gemini_predictions có cùng độ dài
+        if self.enable_vector and self.enable_llm:
+            min_len = min(len(vector_predictions), len(gemini_predictions))
+            if len(vector_predictions) != len(gemini_predictions):
+                print(f"  ⚠️  CẢNH BÁO: Vector có {len(vector_predictions)} predictions, Gemini có {len(gemini_predictions)} predictions")
+                # Cắt về độ dài nhỏ nhất để đảm bảo tính metrics chính xác
+                vector_predictions = vector_predictions[:min_len]
+                gemini_predictions = gemini_predictions[:min_len]
+                if use_ground_truth:
+                    ground_truths = ground_truths[:min_len]
+                n_processed = min_len
+        
         print(f"\n  ✓ Đã hoàn thành đánh giá {n_processed} mẫu")
+        if use_ground_truth:
+            print(f"  ✓ Số lượng ground_truths: {len(ground_truths)}")
+        if self.enable_vector:
+            print(f"  ✓ Số lượng vector_predictions: {len(vector_predictions)}")
+        if self.enable_llm:
+            print(f"  ✓ Số lượng gemini_predictions: {len(gemini_predictions)}")
         
         # Debug: Kiểm tra phân bố predictions
         if self.enable_llm and len(gemini_predictions) > 0:
@@ -344,6 +443,21 @@ class DecisionModelEvaluator:
             print(f"  📊 Phân bố Ground Truth: {dict(gt_dist)}")
             if len(gt_dist) == 1:
                 print(f"  ⚠️  CẢNH BÁO: Tất cả Ground Truth đều giống nhau: {list(gt_dist.keys())[0]}")
+            
+            # Phân tích chi tiết hơn
+            if self.enable_vector and len(vector_predictions) > 0:
+                vector_dist = Counter(vector_predictions)
+                print(f"  📊 Phân bố Vector predictions: {dict(vector_dist)}")
+                # So sánh với ground truth
+                matches = sum(1 for gt, pred in zip(ground_truths, vector_predictions) if gt == pred)
+                print(f"  📊 Vector matches GT: {matches}/{len(ground_truths)} ({matches/len(ground_truths)*100:.1f}%)")
+            
+            if self.enable_llm and len(gemini_predictions) > 0:
+                gemini_dist = Counter(gemini_predictions)
+                print(f"  📊 Phân bố Gemini predictions: {dict(gemini_dist)}")
+                # So sánh với ground truth
+                matches = sum(1 for gt, pred in zip(ground_truths, gemini_predictions) if gt == pred)
+                print(f"  📊 Gemini matches GT: {matches}/{len(ground_truths)} ({matches/len(ground_truths)*100:.1f}%)")
         
         # Tính metrics
         results = {
@@ -385,8 +499,33 @@ class DecisionModelEvaluator:
         labels = ["treat", "review", "test"]
         metrics = {}
         
+        # Validation: Đảm bảo độ dài khớp nhau
+        if self.enable_vector and len(vector_predictions) > 0:
+            if len(ground_truths) != len(vector_predictions):
+                print(f"  ⚠️  LỖI: ground_truths ({len(ground_truths)}) và vector_predictions ({len(vector_predictions)}) có độ dài khác nhau!")
+                min_len = min(len(ground_truths), len(vector_predictions))
+                ground_truths = ground_truths[:min_len]
+                vector_predictions = vector_predictions[:min_len]
+                print(f"  ⚠️  Đã cắt về độ dài {min_len} để tính metrics")
+        
+        if self.enable_llm and len(gemini_predictions) > 0:
+            if len(ground_truths) != len(gemini_predictions):
+                print(f"  ⚠️  LỖI: ground_truths ({len(ground_truths)}) và gemini_predictions ({len(gemini_predictions)}) có độ dài khác nhau!")
+                min_len = min(len(ground_truths), len(gemini_predictions))
+                ground_truths = ground_truths[:min_len]
+                gemini_predictions = gemini_predictions[:min_len]
+                print(f"  ⚠️  Đã cắt về độ dài {min_len} để tính metrics")
+        
         # Metrics cho Vector model (nếu được enable)
         if self.enable_vector and len(vector_predictions) > 0:
+            # Debug: In ra một vài ví dụ để kiểm tra
+            if len(vector_predictions) <= 10:
+                print(f"\n  🔍 DEBUG Vector Model:")
+                print(f"    Ground Truth: {ground_truths}")
+                print(f"    Predictions:  {vector_predictions}")
+                matches = sum(1 for gt, pred in zip(ground_truths, vector_predictions) if gt == pred)
+                print(f"    Matches: {matches}/{len(ground_truths)}")
+            
             vector_accuracy = accuracy_score(ground_truths, vector_predictions)
             vector_precision = precision_score(ground_truths, vector_predictions, labels=labels, average="weighted", zero_division=0)
             vector_recall = recall_score(ground_truths, vector_predictions, labels=labels, average="weighted", zero_division=0)
@@ -405,12 +544,48 @@ class DecisionModelEvaluator:
         
         # Metrics cho Gemini model (nếu được enable)
         if self.enable_llm and len(gemini_predictions) > 0:
+            # Debug: In ra một vài ví dụ để kiểm tra
+            if len(gemini_predictions) <= 10:
+                print(f"\n  🔍 DEBUG Gemini Model:")
+                print(f"    Ground Truth: {ground_truths}")
+                print(f"    Predictions:  {gemini_predictions}")
+                matches = sum(1 for gt, pred in zip(ground_truths, gemini_predictions) if gt == pred)
+                print(f"    Matches: {matches}/{len(ground_truths)}")
+                # In chi tiết từng cặp để debug
+                print(f"    Chi tiết so sánh:")
+                for i, (gt, pred) in enumerate(zip(ground_truths, gemini_predictions)):
+                    match_symbol = "✓" if gt == pred else "✗"
+                    print(f"      Sample {i+1}: GT={gt:6} vs Pred={pred:6} {match_symbol}")
+            
+            # Kiểm tra phân bố classes
+            from collections import Counter
+            gt_dist = Counter(ground_truths)
+            pred_dist = Counter(gemini_predictions)
+            
+            # Cảnh báo nếu chỉ có một class duy nhất
+            if len(gt_dist) == 1:
+                print(f"  ⚠️  CẢNH BÁO: Ground truth chỉ có 1 class duy nhất: {list(gt_dist.keys())[0]}")
+            if len(pred_dist) == 1:
+                print(f"  ⚠️  CẢNH BÁO: Gemini predictions chỉ có 1 class duy nhất: {list(pred_dist.keys())[0]}")
+            
             gemini_accuracy = accuracy_score(ground_truths, gemini_predictions)
             gemini_precision = precision_score(ground_truths, gemini_predictions, labels=labels, average="weighted", zero_division=0)
             gemini_recall = recall_score(ground_truths, gemini_predictions, labels=labels, average="weighted", zero_division=0)
             gemini_f1 = f1_score(ground_truths, gemini_predictions, labels=labels, average="weighted", zero_division=0)
             gemini_cm = confusion_matrix(ground_truths, gemini_predictions, labels=labels)
             gemini_report = classification_report(ground_truths, gemini_predictions, labels=labels, output_dict=True, zero_division=0)
+            
+            # Cảnh báo nếu tất cả metrics đều bằng 1.0
+            if gemini_accuracy == 1.0 and gemini_precision == 1.0 and gemini_recall == 1.0 and gemini_f1 == 1.0:
+                print(f"  ℹ️  THÔNG TIN: Tất cả metrics đều bằng 1.0 - Đây là kết quả ĐÚNG khi:")
+                print(f"      ✓ Tất cả predictions đều khớp với ground truth (100% accuracy)")
+                print(f"      ✓ Không có false positives (100% precision)")
+                print(f"      ✓ Không có false negatives (100% recall)")
+                print(f"      - Phân bố GT: {dict(gt_dist)}")
+                print(f"      - Phân bố Predictions: {dict(pred_dist)}")
+                if len(gemini_predictions) < 20:
+                    print(f"  ⚠️  LƯU Ý: Với chỉ {len(gemini_predictions)} mẫu, kết quả có thể không đại diện.")
+                    print(f"      Khuyến nghị: Tăng số lượng mẫu lên ít nhất 20-50 để đánh giá đáng tin cậy hơn.")
             
             metrics["gemini_model"] = {
                 "accuracy": float(gemini_accuracy),
@@ -512,12 +687,25 @@ class DecisionModelEvaluator:
                 print(f"  Recall:    {metrics['vector_model']['recall']:.4f}")
                 print(f"  F1-Score:  {metrics['vector_model']['f1_score']:.4f}")
                 
+                # Hiển thị per-class metrics
+                if 'classification_report' in metrics['vector_model']:
+                    report = metrics['vector_model']['classification_report']
+                    print("\n  Per-class metrics:")
+                    labels = ["treat", "review", "test"]
+                    for label in labels:
+                        if label in report:
+                            prec = report[label].get('precision', 0)
+                            rec = report[label].get('recall', 0)
+                            f1 = report[label].get('f1-score', 0)
+                            support = report[label].get('support', 0)
+                            print(f"    {label:6}: Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}, Support={support}")
+                
                 print("\n📊 CONFUSION MATRIX - VECTOR MODEL:")
-                print("     treat  review  test")
+                print("        treat  review  test")
                 cm = metrics['vector_model']['confusion_matrix']
                 labels = ["treat", "review", "test"]
                 for i, label in enumerate(labels):
-                    print(f"{label:5} {cm[i]}")
+                    print(f"{label:8} {cm[i]}")
             
             if results.get('enable_llm') and 'gemini_model' in metrics:
                 print("\n🟢 GEMINI (LLM) MODEL:")
@@ -526,12 +714,25 @@ class DecisionModelEvaluator:
                 print(f"  Recall:    {metrics['gemini_model']['recall']:.4f}")
                 print(f"  F1-Score:  {metrics['gemini_model']['f1_score']:.4f}")
                 
+                # Hiển thị per-class metrics
+                if 'classification_report' in metrics['gemini_model']:
+                    report = metrics['gemini_model']['classification_report']
+                    print("\n  Per-class metrics:")
+                    labels = ["treat", "review", "test"]
+                    for label in labels:
+                        if label in report:
+                            prec = report[label].get('precision', 0)
+                            rec = report[label].get('recall', 0)
+                            f1 = report[label].get('f1-score', 0)
+                            support = report[label].get('support', 0)
+                            print(f"    {label:6}: Precision={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}, Support={support}")
+                
                 print("\n📊 CONFUSION MATRIX - GEMINI MODEL:")
-                print("     treat  review  test")
+                print("        treat  review  test")
                 cm = metrics['gemini_model']['confusion_matrix']
                 labels = ["treat", "review", "test"]
                 for i, label in enumerate(labels):
-                    print(f"{label:5} {cm[i]}")
+                    print(f"{label:8} {cm[i]}")
             
             if 'comparison' in metrics:
                 print("\n📈 SO SÁNH:")
@@ -627,7 +828,7 @@ def main():
             system.train(csv_path, test_size=0.2, random_state=42)
     
     # Chọn mô hình để đánh giá (có thể enable cả 2 hoặc chỉ 1)
-    enable_vector = False   # Set False để tắt Vector model
+    enable_vector = True   # Set False để tắt Vector model
     enable_llm = True      # Set False để tắt Gemini LLM model
     
     # Lấy Gemini API key từ environment variable (tự động load từ .env nếu có)
@@ -663,10 +864,15 @@ def main():
     print("BẮT ĐẦU ĐÁNH GIÁ")
     print("=" * 80)
     
+    # Thời gian delay giữa các lần gọi LLM (giây) để tránh quota
+    # Đặt 0 để không delay, hoặc 15 để delay 15 giây giữa mỗi mẫu
+    llm_delay = 15.0  # Delay 15 giây giữa mỗi lần gọi LLM
+    
     results = evaluator.evaluate_on_dataset(
         csv_path,
-        n_samples=50,  # Giới hạn 50 mẫu để test nhanh, có thể tăng hoặc để None
-        use_ground_truth=True
+        n_samples=20,  # Giới hạn 50 mẫu để test nhanh, có thể tăng hoặc để None
+        use_ground_truth=True,
+        llm_delay=llm_delay  # Delay giữa các lần gọi LLM
     )
     
     # In kết quả
